@@ -36,8 +36,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "yamcs-client>=1.9.0",
-    "fprime-gds>=3.0.0",
+    "yamcs-client>=1.12.1",
+    "fprime-gds>=4.1.0",
     "fprime-xtce>=0.1.0",
     "PyYAML>=6.0.3",
 ]
