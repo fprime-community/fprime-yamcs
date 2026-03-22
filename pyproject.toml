@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fprime-yamcs"
+version = "1.0.0"
+description = "FPrime/YAMCS Bridge: Connects F Prime to YAMCS with event support"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Michael Starch", email = "LeStarch@googlemail.com"}
+]
+maintainers = [
+    {name = "Michael Starch", email = "LeStarch@googlemail.com"}
+]
+keywords = ["fprime", "yamcs", "events", "telemetry", "spacecraft"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "yamcs-client>=1.9.0",
+    "fprime-gds>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fprime-community/fprime-yamcs"
+Documentation = "https://github.com/fprime-community/fprime-yamcs"
+Repository = "https://github.com/fprime-community/fprime-yamcs"
+Issues = "https://github.com/fprime-community/fprime-yamcs/issues"
+
+[project.scripts]
+fprime-yamcs-events = "fprime_yamcs.events.__main__:main"
+fprime-yamcs = "fprime_yamcs.__main__:main"
+
+[tool.setuptools]
+include-package-data = true
