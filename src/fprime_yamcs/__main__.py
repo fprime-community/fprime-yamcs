@@ -43,6 +43,12 @@ class YamcsParser(ParserBase):
                 "type": Path,
                 "help": "Specify the YAMCS data directory. Default: %(default)s",
             },
+            ("--yamcs-events-instance",): {
+                "action": "store",
+                "default": None,
+                "type": Path,
+                "help": "Specify the YAMCS instance to use for fprime-events",
+            },
         }
 
     def handle_arguments(self, args, **kwargs):
@@ -124,12 +130,12 @@ def launch_yamcs(parsed_args):
     # Set up the environment variables required by YAMCS and fprime-yamcs
     environment = os.environ.copy()
     environment["FPRIME_DICTIONARY"] = parsed_args.dictionary
-    environment["FPRIME_YAMCS_INSTANCE"] = parsed_args.events_instance
+    environment["FPRIME_YAMCS_INSTANCE"] = parsed_args.yamcs_events_instance
 
-    print(f"[INFO] Using FPRIME_DICTIONARY={environment['FPRIME_DICTIONARY']}")
-    print(f"[INFO] Using FPRIME_YAMCS_INSTANCE={environment['FPRIME_YAMCS_INSTANCE']}")
-    print(f"[INFO] Using YAMCS_DATA_DIR={parsed_args.yamcs_data_dir.absolute()}")
-    print(f"[INFO] Using YAMCS_CONFIG_DIR={parsed_args.yamcs_config_dir.absolute()}")
+    print(f"[INFO] Using FPRIME_DICTIONARY: {environment['FPRIME_DICTIONARY']}")
+    print(f"[INFO] Using FPRIME_YAMCS_INSTANCE: {environment['FPRIME_YAMCS_INSTANCE']}")
+    print(f"[INFO] Using YAMCS_DATA_DIR: {parsed_args.yamcs_data_dir.absolute()}")
+    print(f"[INFO] Using YAMCS_CONFIG_DIR: {parsed_args.yamcs_config_dir.absolute()}")
 
     # Switch to the YAMCS directory and launch YAMCS using Maven
     return launch_process(
@@ -178,7 +184,8 @@ def main():
             print(f"[INFO] Updating YAMCS XTCE dictionary from {parsed_args.dictionary} to {xtce_dictionary}")
             subprocess.run(["fprime-to-xtce", "-o", str(xtce_dictionary), str(parsed_args.dictionary)],
                            check=True)
-        parsed_args.events_instance = events_instance
+        if parsed_args.yamcs_events_instance is None:
+            parsed_args.yamcs_events_instance = events_instance
         processes = [launcher(parsed_args) for launcher in [launch_app, launch_yamcs]]
         print("[INFO] F Prime/YAMCS is now running. CTRL-C to shutdown all components.")
         processes[-1].wait()
