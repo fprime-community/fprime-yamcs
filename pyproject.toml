@@ -1,14 +1,18 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77", "wheel", "setuptools_scm[toml]>=6.2"]
+
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
 
 [project]
 name = "fprime-yamcs"
-version = "1.0.0"
+dynamic = ["version"]
 description = "FPrime/YAMCS Bridge: Connects F Prime to YAMCS with event support"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     {name = "Michael Starch", email = "LeStarch@googlemail.com"}
 ]
@@ -22,7 +26,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -35,6 +38,8 @@ classifiers = [
 dependencies = [
     "yamcs-client>=1.9.0",
     "fprime-gds>=3.0.0",
+    "fprime-xtce>=0.1.0",
+    "PyYAML>=6.0.3",
 ]
 
 [project.urls]
@@ -49,3 +54,15 @@ fprime-yamcs = "fprime_yamcs.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["fprime_yamcs"]
+
+
+[tool.setuptools.package-data]
+fprime_yamcs = [
+    "pox.xml",
+    "src/main/yamcs/etc/*",
+    "src/main/java/*"
+]
