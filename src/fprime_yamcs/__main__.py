@@ -202,7 +202,8 @@ def main():
                            check=True)
         if parsed_args.yamcs_events_instance is None:
             parsed_args.yamcs_events_instance = events_instance
-        processes = [launcher(parsed_args) for launcher in [launch_app, launch_yamcs]]
+        launch_app = [launch_app] if parsed_args.app is not None else []
+        processes = [launcher(parsed_args) for launcher in launch_app + [launch_yamcs]]
         print("[INFO] F Prime/YAMCS is now running. CTRL-C to shutdown all components.")
         processes[-1].wait()
     except KeyboardInterrupt:
