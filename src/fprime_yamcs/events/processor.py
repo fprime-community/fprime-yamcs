@@ -206,12 +206,17 @@ class FPrimeEventProcessor:
             # For now, we'll log the event and show how it would be published
             
             # Option 1: Using REST API (if available)
+            # Include the decoded event arguments as structured `extra`
+            # key/value pairs so downstream consumers (YAMCS services,
+            # scripts, dashboards) can read them via Event.getExtra()
+            # without having to regex-parse the message string.
             self.yamcs_client.send_event(
                 instance=self.yamcs_instance,
                 source='FPrimeEventProcessor',
                 event_type=event_name,
                 severity=yamcs_severity,
                 message=message,
+                extra=event_args if event_args else None,
             )
             
             # Option 2: Create a parameter update (alternative approach)
