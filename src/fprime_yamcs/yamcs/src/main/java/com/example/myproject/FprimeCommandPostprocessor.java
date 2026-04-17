@@ -23,23 +23,23 @@ import org.yamcs.utils.ByteArrayUtils;
  *     stream: tc_realtime
  *     host: localhost
  *     port: 10025
- *     commandPostprocessorClassName: com.example.myproject.MyCommandPostprocessor
+ *     commandPostprocessorClassName: com.example.myproject.FprimeCommandPostprocessor
  * ...
  * </pre>
  */
-public class MyCommandPostprocessor implements CommandPostprocessor {
+public class FprimeCommandPostprocessor implements CommandPostprocessor {
 
     private CcsdsSeqCountFiller seqFiller = new CcsdsSeqCountFiller();
     private CommandHistoryPublisher commandHistory;
 
     // Constructor used when this postprocessor is used without YAML configuration
-    public MyCommandPostprocessor(String yamcsInstance) {
+    public FprimeCommandPostprocessor(String yamcsInstance) {
         this(yamcsInstance, YConfiguration.emptyConfig());
     }
 
     // Constructor used when this postprocessor is used with YAML configuration
     // (commandPostprocessorClassArgs)
-    public MyCommandPostprocessor(String yamcsInstance, YConfiguration config) {
+    public FprimeCommandPostprocessor(String yamcsInstance, YConfiguration config) {
     }
 
     // Called by Yamcs during initialization
