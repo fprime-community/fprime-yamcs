@@ -7,8 +7,8 @@
   <version>1.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>My Project</name>
-  <url>https://example.com</url>
+  <name>F´/YAMCS</name>
+  <url>https://github.com/fprime-community/fprime-yamcs</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

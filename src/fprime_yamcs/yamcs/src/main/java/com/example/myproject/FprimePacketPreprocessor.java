@@ -26,11 +26,11 @@ import org.yamcs.utils.TimeEncoding;
  *     stream: tm_realtime
  *     host: localhost
  *     port: 10015
- *     packetPreprocessorClassName: com.example.myproject.MyPacketPreprocessor
+ *     packetPreprocessorClassName: com.example.myproject.FprimePacketPreprocessor
  * ...
  * </pre>
  */
-public class MyPacketPreprocessor extends AbstractPacketPreprocessor {
+public class FprimePacketPreprocessor extends AbstractPacketPreprocessor {
 
     private Map<Integer, AtomicInteger> seqCounts = new HashMap<>();
 
@@ -53,13 +53,13 @@ public class MyPacketPreprocessor extends AbstractPacketPreprocessor {
     private static final int APID_TLM_PKT = 4; // default F' APID for telemetry packets
 
     // Constructor used when this preprocessor is used without YAML configuration
-    public MyPacketPreprocessor(String yamcsInstance) {
+    public FprimePacketPreprocessor(String yamcsInstance) {
         this(yamcsInstance, YConfiguration.emptyConfig());
     }
 
     // Constructor used when this preprocessor is used with YAML configuration
     // (packetPreprocessorClassArgs)
-    public MyPacketPreprocessor(String yamcsInstance, YConfiguration config) {
+    public FprimePacketPreprocessor(String yamcsInstance, YConfiguration config) {
         super(yamcsInstance, config);
     }
 
