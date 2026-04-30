@@ -30,4 +30,34 @@ This is to allow for automatic dictionary generation. Users declining this servi
 
 Currently, the default configuration of YAMCS requires F Prime to connect a CCSDS TC/TM framer/deframer to the Drv.Udp component ensuring that UDP is the transport mechanism.
 
+```mermaid id="th4eai"
+flowchart LR
+    subgraph FPRIME["F´"]
+        FPD["F´ Dictionary<br/>(JSON topology dictionary)"]
+    end
 
+    subgraph OUTER["fprime-yamcs CLI"]
+        subgraph FY["fprime-yamcs"]
+            XTCEC["XTCE Converter<br/>(fprime-xtce)"]
+            EVENTS["F Prime Event Processor"]
+            BASECFG["Standard Config<br/>(yamcs.yml, processors, links, etc.)"]
+        end
+
+        XTCE["XTCE Dictionary<br/>(YAMCS dialect XML)"]
+
+        subgraph YSYS["YAMCS"]
+            YAMCS["Mission Control / Ground System"]
+        end
+    end
+
+    FPD --> XTCEC
+    FPD --> EVENTS
+
+    XTCEC --> XTCE
+    XTCE --> YAMCS
+    EVENTS --> YAMCS
+    BASECFG --> YAMCS
+
+    %% Make the outer box dotted with no background
+    style OUTER stroke-dasharray: 5 5, fill:none
+```
