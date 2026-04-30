@@ -6,7 +6,7 @@ fprime-yamcs is designed to run YAMCS as the ground system when working with fpr
 
 `fprime-yamcs` requires the users to have `mvn` installed. See: [https://maven.apache.org/](https://maven.apache.org/).
 
-> ![CAUTION]
+> [!CAUTION]
 > `mvn` requires JDK to be installed
 
 ## Usage
