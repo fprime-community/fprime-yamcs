@@ -303,9 +303,9 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                 "FileHandling|fileDownlink|SendFile|destFileName");
         // Remote file listing: F´ FileManager.ListDirectory command.
         spec.addOption("listDirectoryCommand", OptionType.STRING).withDefault(
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileManager|ListDirectory");
+                "/FprimeYamcsReference/YamcsDeployment/FileHandling/fileManager/ListDirectory");
         spec.addOption("listDirDirNameArg", OptionType.STRING).withDefault(
-                "FileHandling|fileManager|ListDirectory|dirName");
+                "FileHandling/fileManager/ListDirectory/dirName");
         // How long to wait for F´ to emit a Start packet after we
         // synthesize a FileDownlink command before flipping the
         // pending transfer to FAILED. 30 seconds is generous for a
