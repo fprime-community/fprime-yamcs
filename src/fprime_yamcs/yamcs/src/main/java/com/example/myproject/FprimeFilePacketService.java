@@ -297,14 +297,11 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // and destination path arguments.
         spec.addOption("fileDownlinkCommand", OptionType.STRING).withDefault(
                 "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileDownlink/SendFile");
-        spec.addOption("sourceFileNameArg", OptionType.STRING).withDefault(
-                "FileHandling/fileDownlink/SendFile/sourceFileName");
-        spec.addOption("destFileNameArg", OptionType.STRING).withDefault(
-                "FileHandling/fileDownlink/SendFile/destFileName");
+        spec.addOption("sourceFileNameArg", OptionType.STRING).withDefault("sourceFileName");
+        spec.addOption("destFileNameArg", OptionType.STRING).withDefault("destFileName");
         spec.addOption("listDirectoryCommand", OptionType.STRING).withDefault(
                 "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileManager/ListDirectory");
-        spec.addOption("listDirDirNameArg", OptionType.STRING).withDefault(
-                "FileHandling/fileManager/ListDirectory/dirName");
+        spec.addOption("listDirDirNameArg", OptionType.STRING).withDefault("dirName");
         // How long to wait for F´ to emit a Start packet after we
         // synthesize a FileDownlink command before flipping the
         // pending transfer to FAILED. 30 seconds is generous for a
@@ -324,22 +321,12 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         this.uplinkChunkSize = config.getInt("uplinkChunkSize", 128);
         this.fileDownlinkCommandName = config.getString("fileDownlinkCommand",
                 "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileDownlink/SendFile");
-        String sourceFileNameArgPath = config.getString("sourceFileNameArg",
-                "FileHandling/fileDownlink/SendFile/sourceFileName");
-        String destFileNameArgPath = config.getString("destFileNameArg",
-                "FileHandling/fileDownlink/SendFile/destFileName");
+        this.sourceFileNameArg = config.getString("sourceFileNameArg", "sourceFileName");
+        this.destFileNameArg = config.getString("destFileNameArg", "destFileName");
         this.listDirectoryCommandName = config.getString("listDirectoryCommand",
                 "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileManager/ListDirectory");
-        String listDirDirNameArgPath = config.getString("listDirDirNameArg",
-                "FileHandling/fileManager/ListDirectory/dirName");
+        this.listDirDirNameArg = config.getString("listDirDirNameArg", "dirName");
         this.downloadTimeoutMs = config.getLong("downloadTimeoutMs", 30000L);
-
-        int srcSlash = sourceFileNameArgPath.lastIndexOf('/');
-        this.sourceFileNameArg = srcSlash >= 0 ? sourceFileNameArgPath.substring(srcSlash + 1) : sourceFileNameArgPath;
-        int dstSlash = destFileNameArgPath.lastIndexOf('/');
-        this.destFileNameArg = dstSlash >= 0 ? destFileNameArgPath.substring(dstSlash + 1) : destFileNameArgPath;
-        int dirSlash = listDirDirNameArgPath.lastIndexOf('/');
-        this.listDirDirNameArg = dirSlash >= 0 ? listDirDirNameArgPath.substring(dirSlash + 1) : listDirDirNameArgPath;
 
         LOG.info("FprimeFilePacketService init: inStream={} bucket={} fileApid={}"
                 + " uplinkLink={} chunk={}B",
