@@ -453,8 +453,6 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
     @Override
     public void notifyRemoteFileListMonitors(ListFilesResponse listing) {
-        LOG.info("Notifying {} monitors about listing for path {} with {} files",
-                remoteFileListMonitors.size(), listing.getRemotePath(), listing.getFilesCount());
         for (RemoteFileListMonitor m : remoteFileListMonitors) {
             try {
                 m.receivedFileList(listing);
