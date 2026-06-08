@@ -386,7 +386,11 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // Create/refresh the accumulator for this directory. If a prior
         // listing was in progress for the same path, discard it — the
         // caller is asking for a fresh view.
-        inProgressListings.put(dirName, new ListingAccumulator(dirName));
+        ListingAccumulator acc = new ListingAccumulator(dirName);
+        inProgressListings.put(dirName, acc);
+
+        ListFilesResponse initialResponse = acc.build("in_progress");
+        notifyRemoteFileListMonitors(initialResponse);
 
         try {
             Map<String, Object> args = new java.util.HashMap<>();
@@ -399,10 +403,9 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         } catch (Exception e) {
             LOG.error("fetchFileList({}): failed to dispatch ListDirectory command",
                     dirName, e);
-            ListingAccumulator acc = inProgressListings.remove(dirName);
-            if (acc != null) {
-                // Publish a failed listing so the UI isn't stuck.
-                ListFilesResponse failed = acc.build("failed");
+            ListingAccumulator failedAcc = inProgressListings.remove(dirName);
+            if (failedAcc != null) {
+                ListFilesResponse failed = failedAcc.build("failed");
                 fileListCache.put(dirName, failed);
                 notifyRemoteFileListMonitors(failed);
             }
