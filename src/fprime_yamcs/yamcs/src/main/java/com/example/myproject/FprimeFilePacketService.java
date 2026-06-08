@@ -323,16 +323,23 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         this.uplinkLinkName = config.getString("uplinkLink", "UDP_TC_OUT.vc1");
         this.uplinkChunkSize = config.getInt("uplinkChunkSize", 128);
         this.fileDownlinkCommandName = config.getString("fileDownlinkCommand",
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileDownlink|SendFile");
-        this.sourceFileNameArg = config.getString("sourceFileNameArg",
-                "FileHandling|fileDownlink|SendFile|sourceFileName");
-        this.destFileNameArg = config.getString("destFileNameArg",
-                "FileHandling|fileDownlink|SendFile|destFileName");
+                "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileDownlink/SendFile");
+        String sourceFileNameArgPath = config.getString("sourceFileNameArg",
+                "FileHandling/fileDownlink/SendFile/sourceFileName");
+        String destFileNameArgPath = config.getString("destFileNameArg",
+                "FileHandling/fileDownlink/SendFile/destFileName");
         this.listDirectoryCommandName = config.getString("listDirectoryCommand",
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileManager|ListDirectory");
-        this.listDirDirNameArg = config.getString("listDirDirNameArg",
-                "FileHandling|fileManager|ListDirectory|dirName");
+                "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileManager/ListDirectory");
+        String listDirDirNameArgPath = config.getString("listDirDirNameArg",
+                "FileHandling/fileManager/ListDirectory/dirName");
         this.downloadTimeoutMs = config.getLong("downloadTimeoutMs", 30000L);
+
+        int srcSlash = sourceFileNameArgPath.lastIndexOf('/');
+        this.sourceFileNameArg = srcSlash >= 0 ? sourceFileNameArgPath.substring(srcSlash + 1) : sourceFileNameArgPath;
+        int dstSlash = destFileNameArgPath.lastIndexOf('/');
+        this.destFileNameArg = dstSlash >= 0 ? destFileNameArgPath.substring(dstSlash + 1) : destFileNameArgPath;
+        int dirSlash = listDirDirNameArgPath.lastIndexOf('/');
+        this.listDirDirNameArg = dirSlash >= 0 ? listDirDirNameArgPath.substring(dirSlash + 1) : listDirDirNameArgPath;
 
         LOG.info("FprimeFilePacketService init: inStream={} bucket={} fileApid={}"
                 + " uplinkLink={} chunk={}B",
@@ -396,9 +403,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            int lastSlash = listDirDirNameArg.lastIndexOf('/');
-            String argName = lastSlash >= 0 ? listDirDirNameArg.substring(lastSlash + 1) : listDirDirNameArg;
-            args.put(argName, dirName);
+            args.put(listDirDirNameArg, dirName);
             PreparedCommand pc = commandingManager.buildCommand(
                     listDirectoryCommand, args,
                     "FprimeFilePacketService-listing",
@@ -1158,12 +1163,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // Build and dispatch the F´ SendFile command on behalf of the user.
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            int srcSlash = sourceFileNameArg.lastIndexOf('/');
-            String sourceArgName = srcSlash >= 0 ? sourceFileNameArg.substring(srcSlash + 1) : sourceFileNameArg;
-            int dstSlash = destFileNameArg.lastIndexOf('/');
-            String destArgName = dstSlash >= 0 ? destFileNameArg.substring(dstSlash + 1) : destFileNameArg;
-            args.put(sourceArgName, sourcePath);
-            args.put(destArgName, destPath);
+            args.put(sourceFileNameArg, sourcePath);
+            args.put(destFileNameArg, destPath);
             PreparedCommand pc = commandingManager.buildCommand(
                     fileDownlinkCommand, args,
                     "FprimeFilePacketService",
