@@ -301,7 +301,6 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                 "FileHandling|fileDownlink|SendFile|sourceFileName");
         spec.addOption("destFileNameArg", OptionType.STRING).withDefault(
                 "FileHandling|fileDownlink|SendFile|destFileName");
-        // Remote file listing: F´ FileManager.ListDirectory command.
         spec.addOption("listDirectoryCommand", OptionType.STRING).withDefault(
                 "/FprimeYamcsReference_YamcsDeployment/FileHandling/fileManager/ListDirectory");
         spec.addOption("listDirDirNameArg", OptionType.STRING).withDefault(
@@ -397,18 +396,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            // Extract the simple argument name from the hierarchical path.
-            // listDirDirNameArg may be "FileHandling/fileManager/ListDirectory/dirName"
-            // or "FileHandling|fileManager|ListDirectory|dirName"
-            // but buildCommand expects just "dirName".
-            String argName;
-            if (listDirDirNameArg.contains("/")) {
-                argName = listDirDirNameArg.substring(listDirDirNameArg.lastIndexOf('/') + 1);
-            } else if (listDirDirNameArg.contains("|")) {
-                argName = listDirDirNameArg.substring(listDirDirNameArg.lastIndexOf('|') + 1);
-            } else {
-                argName = listDirDirNameArg;
-            }
+            int lastSep = Math.max(listDirDirNameArg.lastIndexOf('/'), listDirDirNameArg.lastIndexOf('|'));
+            String argName = lastSep >= 0 ? listDirDirNameArg.substring(lastSep + 1) : listDirDirNameArg;
             args.put(argName, dirName);
             PreparedCommand pc = commandingManager.buildCommand(
                     listDirectoryCommand, args,
@@ -1169,13 +1158,10 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // Build and dispatch the F´ SendFile command on behalf of the user.
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            // Extract simple argument names from hierarchical paths
-            String sourceArgName = sourceFileNameArg.contains("|")
-                    ? sourceFileNameArg.substring(sourceFileNameArg.lastIndexOf('|') + 1)
-                    : sourceFileNameArg;
-            String destArgName = destFileNameArg.contains("|")
-                    ? destFileNameArg.substring(destFileNameArg.lastIndexOf('|') + 1)
-                    : destFileNameArg;
+            int srcSep = Math.max(sourceFileNameArg.lastIndexOf('/'), sourceFileNameArg.lastIndexOf('|'));
+            String sourceArgName = srcSep >= 0 ? sourceFileNameArg.substring(srcSep + 1) : sourceFileNameArg;
+            int dstSep = Math.max(destFileNameArg.lastIndexOf('/'), destFileNameArg.lastIndexOf('|'));
+            String destArgName = dstSep >= 0 ? destFileNameArg.substring(dstSep + 1) : destFileNameArg;
             args.put(sourceArgName, sourcePath);
             args.put(destArgName, destPath);
             PreparedCommand pc = commandingManager.buildCommand(
