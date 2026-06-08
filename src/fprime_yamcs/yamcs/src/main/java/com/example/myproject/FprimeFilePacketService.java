@@ -428,15 +428,20 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     @Override
     public void registerRemoteFileListMonitor(RemoteFileListMonitor monitor) {
         remoteFileListMonitors.add(monitor);
+        LOG.info("Monitor registered. Total monitors: {}", remoteFileListMonitors.size());
     }
 
     @Override
     public void unregisterRemoteFileListMonitor(RemoteFileListMonitor monitor) {
         remoteFileListMonitors.remove(monitor);
+        LOG.info("Monitor unregistered. Total monitors: {}", remoteFileListMonitors.size());
     }
 
     @Override
     public void notifyRemoteFileListMonitors(ListFilesResponse listing) {
+        LOG.info("Notifying {} monitors for directory: {} (state: {}, {} files)",
+                remoteFileListMonitors.size(), listing.getRemotePath(),
+                listing.getState(), listing.getFilesCount());
         for (RemoteFileListMonitor m : remoteFileListMonitors) {
             try {
                 m.receivedFileList(listing);
