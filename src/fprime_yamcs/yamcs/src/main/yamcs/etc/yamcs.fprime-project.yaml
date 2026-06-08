@@ -32,12 +32,6 @@ services:
       bucket: fprimeFilesIn
       fileApid: 3
       downloadTimeoutMs: 8000
-      uplinkLink: UDP_TC_OUT.vc1
-      listDirectoryCommand: /FprimeYamcsReference_YamcsDeployment/FileHandling/fileManager/ListDirectory
-      listDirDirNameArg: FileHandling/fileManager/ListDirectory/dirName
-      fileDownlinkCommand: /FprimeYamcsReference_YamcsDeployment/FileHandling/fileDownlink/SendFile
-      sourceFileNameArg: FileHandling/fileDownlink/SendFile/sourceFileName
-      destFileNameArg: FileHandling/fileDownlink/SendFile/destFileName
 dataLinks:
   - name: UDP_TM_IN
     class: org.yamcs.tctm.ccsds.UdpTmFrameLink
