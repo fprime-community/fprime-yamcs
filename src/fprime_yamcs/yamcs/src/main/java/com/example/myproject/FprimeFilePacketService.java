@@ -397,7 +397,19 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            args.put(listDirDirNameArg, dirName);
+            // Extract the simple argument name from the hierarchical path.
+            // listDirDirNameArg may be "FileHandling/fileManager/ListDirectory/dirName"
+            // or "FileHandling|fileManager|ListDirectory|dirName"
+            // but buildCommand expects just "dirName".
+            String argName;
+            if (listDirDirNameArg.contains("/")) {
+                argName = listDirDirNameArg.substring(listDirDirNameArg.lastIndexOf('/') + 1);
+            } else if (listDirDirNameArg.contains("|")) {
+                argName = listDirDirNameArg.substring(listDirDirNameArg.lastIndexOf('|') + 1);
+            } else {
+                argName = listDirDirNameArg;
+            }
+            args.put(argName, dirName);
             PreparedCommand pc = commandingManager.buildCommand(
                     listDirectoryCommand, args,
                     "FprimeFilePacketService-listing",
@@ -1157,8 +1169,15 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // Build and dispatch the F´ SendFile command on behalf of the user.
         try {
             Map<String, Object> args = new java.util.HashMap<>();
-            args.put(sourceFileNameArg, sourcePath);
-            args.put(destFileNameArg, destPath);
+            // Extract simple argument names from hierarchical paths
+            String sourceArgName = sourceFileNameArg.contains("|")
+                    ? sourceFileNameArg.substring(sourceFileNameArg.lastIndexOf('|') + 1)
+                    : sourceFileNameArg;
+            String destArgName = destFileNameArg.contains("|")
+                    ? destFileNameArg.substring(destFileNameArg.lastIndexOf('|') + 1)
+                    : destFileNameArg;
+            args.put(sourceArgName, sourcePath);
+            args.put(destArgName, destPath);
             PreparedCommand pc = commandingManager.buildCommand(
                     fileDownlinkCommand, args,
                     "FprimeFilePacketService",
