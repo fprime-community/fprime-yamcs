@@ -390,6 +390,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         inProgressListings.put(dirName, acc);
 
         ListFilesResponse initialResponse = acc.build("in_progress");
+        fileListCache.put(dirName, initialResponse);
         notifyRemoteFileListMonitors(initialResponse);
 
         try {
@@ -514,6 +515,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                         ListingAccumulator acc = inProgressListings.get(dir);
                         if (acc != null) {
                             acc.addFile(file, size);
+                            updateCacheIfNeeded(dir, acc);
                         }
                         break;
                     }
@@ -533,6 +535,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                         ListingAccumulator acc = inProgressListings.get(dir);
                         if (acc != null) {
                             acc.addSubdir(subdir);
+                            updateCacheIfNeeded(dir, acc);
                         }
                         break;
                     }
@@ -603,6 +606,14 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         notifyRemoteFileListMonitors(response);
     }
 
+    private void updateCacheIfNeeded(String dir, ListingAccumulator acc) {
+        if (acc.shouldUpdateCache()) {
+            ListFilesResponse partial = acc.build("in_progress");
+            fileListCache.put(dir, partial);
+            acc.markCacheUpdated();
+        }
+    }
+
     /**
      * Collects file and subdirectory entries for a single in-progress
      * directory listing. Flipped to a ListFilesResponse when the
@@ -612,6 +623,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         private final String dirName;
         private final List<RemoteFile> entries = new ArrayList<>();
         private final long startMs = System.currentTimeMillis();
+        private int entriesSinceLastUpdate = 0;
+        private static final int UPDATE_THRESHOLD = 5;
 
         ListingAccumulator(String dirName) {
             this.dirName = dirName;
@@ -623,6 +636,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                     .setIsDirectory(false)
                     .setSize(size)
                     .build());
+            entriesSinceLastUpdate++;
         }
 
         synchronized void addSubdir(String name) {
@@ -631,6 +645,15 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                     .setIsDirectory(true)
                     .setSize(0)
                     .build());
+            entriesSinceLastUpdate++;
+        }
+
+        synchronized boolean shouldUpdateCache() {
+            return entriesSinceLastUpdate >= UPDATE_THRESHOLD;
+        }
+
+        synchronized void markCacheUpdated() {
+            entriesSinceLastUpdate = 0;
         }
 
         synchronized ListFilesResponse build(String state) {
