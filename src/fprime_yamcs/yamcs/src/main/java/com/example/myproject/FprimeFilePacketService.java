@@ -58,6 +58,7 @@ import org.yamcs.protobuf.TransferState;
 import org.yamcs.yarch.protobuf.Db.Event;
 import org.yamcs.security.User;
 import org.yamcs.xtce.MetaCommand;
+import org.yamcs.xtce.SpaceSystem;
 import org.yamcs.tctm.Link;
 import org.yamcs.tctm.ccsds.TcPacketHandler;
 import org.yamcs.yarch.Stream;
@@ -295,15 +296,12 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         // Downlink: qualified name of the F´ command that triggers a
         // FileDownlink on the spacecraft, plus the names of its source
         // and destination path arguments.
-        spec.addOption("fileDownlinkCommand", OptionType.STRING).withDefault(
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileDownlink|SendFile");
+        spec.addOption("fileDownlinkCommand", OptionType.STRING).withDefault("");
         spec.addOption("sourceFileNameArg", OptionType.STRING).withDefault(
                 "FileHandling|fileDownlink|SendFile|sourceFileName");
         spec.addOption("destFileNameArg", OptionType.STRING).withDefault(
                 "FileHandling|fileDownlink|SendFile|destFileName");
-        // Remote file listing: F´ FileManager.ListDirectory command.
-        spec.addOption("listDirectoryCommand", OptionType.STRING).withDefault(
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileManager|ListDirectory");
+        spec.addOption("listDirectoryCommand", OptionType.STRING).withDefault("");
         spec.addOption("listDirDirNameArg", OptionType.STRING).withDefault(
                 "FileHandling|fileManager|ListDirectory|dirName");
         // How long to wait for F´ to emit a Start packet after we
@@ -323,14 +321,12 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         this.fileApid = config.getInt("fileApid", DEFAULT_FILE_APID);
         this.uplinkLinkName = config.getString("uplinkLink", "UDP_TC_OUT.vc1");
         this.uplinkChunkSize = config.getInt("uplinkChunkSize", 128);
-        this.fileDownlinkCommandName = config.getString("fileDownlinkCommand",
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileDownlink|SendFile");
+        this.fileDownlinkCommandName = config.getString("fileDownlinkCommand", "");
         this.sourceFileNameArg = config.getString("sourceFileNameArg",
                 "FileHandling|fileDownlink|SendFile|sourceFileName");
         this.destFileNameArg = config.getString("destFileNameArg",
                 "FileHandling|fileDownlink|SendFile|destFileName");
-        this.listDirectoryCommandName = config.getString("listDirectoryCommand",
-                "/FprimeYamcsReference|YamcsDeployment/FileHandling|fileManager|ListDirectory");
+        this.listDirectoryCommandName = config.getString("listDirectoryCommand", "");
         this.listDirDirNameArg = config.getString("listDirDirNameArg",
                 "FileHandling|fileManager|ListDirectory|dirName");
         this.downloadTimeoutMs = config.getLong("downloadTimeoutMs", 30000L);
@@ -714,6 +710,26 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
             if (processor != null) {
                 this.commandingManager = processor.getCommandingManager();
                 this.commandHistoryPublisher = processor.getCommandHistoryPublisher();
+
+                if (fileDownlinkCommandName.isEmpty() || listDirectoryCommandName.isEmpty()) {
+                    SpaceSystem root = processor.getMdb().getRootSpaceSystem();
+                    List<SpaceSystem> subs = new ArrayList<>(root.getSubSystems());
+                    String ns = "";
+                    for (SpaceSystem ss : subs) {
+                        if (!ss.getName().equals("yamcs") && !ss.getName().equals("system")) {
+                            ns = "/" + ss.getName();
+                            break;
+                        }
+                    }
+                    LOG.info("Auto-discovered MDB namespace: {}", ns);
+                    if (fileDownlinkCommandName.isEmpty()) {
+                        fileDownlinkCommandName = ns + "/FileHandling|fileDownlink|SendFile";
+                    }
+                    if (listDirectoryCommandName.isEmpty()) {
+                        listDirectoryCommandName = ns + "/FileHandling|fileManager|ListDirectory";
+                    }
+                }
+
                 this.fileDownlinkCommand = processor.getMdb().getMetaCommand(fileDownlinkCommandName);
                 this.listDirectoryCommand = processor.getMdb().getMetaCommand(listDirectoryCommandName);
                 this.systemUser = YamcsServer.getServer().getSecurityStore().getSystemUser();
