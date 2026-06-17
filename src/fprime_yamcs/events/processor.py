@@ -217,6 +217,7 @@ class FPrimeEventProcessor:
                 severity=yamcs_severity,
                 message=message,
                 extra=event_args if event_args else None,
+                time=generation_time,
             )
             
             # Option 2: Create a parameter update (alternative approach)
