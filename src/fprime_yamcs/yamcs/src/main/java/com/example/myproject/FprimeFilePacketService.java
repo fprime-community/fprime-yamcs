@@ -712,22 +712,17 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                 this.commandHistoryPublisher = processor.getCommandHistoryPublisher();
 
                 if (fileDownlinkCommandName.isEmpty() || listDirectoryCommandName.isEmpty()) {
-                    SpaceSystem root = processor.getMdb().getRootSpaceSystem();
-                    List<SpaceSystem> subs = new ArrayList<>(root.getSubSystems());
-                    String ns = "";
-                    for (SpaceSystem ss : subs) {
-                        if (!ss.getName().equals("yamcs") && !ss.getName().equals("system")) {
-                            ns = "/" + ss.getName();
-                            break;
+                    for (MetaCommand cmd : processor.getMdb().getMetaCommands()) {
+                        String qn = cmd.getQualifiedName();
+                        if (fileDownlinkCommandName.isEmpty() && qn.endsWith("SendFile")) {
+                            fileDownlinkCommandName = qn;
+                        }
+                        if (listDirectoryCommandName.isEmpty() && qn.endsWith("ListDirectory")) {
+                            listDirectoryCommandName = qn;
                         }
                     }
-                    LOG.info("Auto-discovered MDB namespace: {}", ns);
-                    if (fileDownlinkCommandName.isEmpty()) {
-                        fileDownlinkCommandName = ns + "/FileHandling|fileDownlink|SendFile";
-                    }
-                    if (listDirectoryCommandName.isEmpty()) {
-                        listDirectoryCommandName = ns + "/FileHandling|fileManager|ListDirectory";
-                    }
+                    LOG.info("Auto-discovered commands: downlink={}, listing={}",
+                            fileDownlinkCommandName, listDirectoryCommandName);
                 }
 
                 this.fileDownlinkCommand = processor.getMdb().getMetaCommand(fileDownlinkCommandName);
