@@ -29,9 +29,13 @@
       <IntegerParameterType name="I64" signed="true" sizeInBits="64">
         <IntegerDataEncoding encoding="twosComplement" sizeInBits="64" byteOrder="mostSignificantByteFirst" />
       </IntegerParameterType>
-      <BooleanParameterType name="bool" oneStringValue="True" zeroStringValue="False">
+      <EnumeratedParameterType name="bool">
         <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst" />
-      </BooleanParameterType>
+        <EnumerationList>
+          <Enumeration label="False" value="0" />
+          <Enumeration label="True" value="255" />
+        </EnumerationList>
+      </EnumeratedParameterType>
       <FloatParameterType name="F32" sizeInBits="32">
         <FloatDataEncoding sizeInBits="32" encoding="IEEE754_1985" byteOrder="mostSignificantByteFirst" />
       </FloatParameterType>
@@ -2078,9 +2082,13 @@
       <IntegerArgumentType name="I64" signed="true" sizeInBits="64">
         <IntegerDataEncoding encoding="twosComplement" sizeInBits="64" byteOrder="mostSignificantByteFirst" />
       </IntegerArgumentType>
-      <BooleanArgumentType name="bool" oneStringValue="True" zeroStringValue="False">
+      <EnumeratedArgumentType name="bool">
         <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst" />
-      </BooleanArgumentType>
+        <EnumerationList>
+          <Enumeration label="False" value="0" />
+          <Enumeration label="True" value="255" />
+        </EnumerationList>
+      </EnumeratedArgumentType>
       <FloatArgumentType name="F32" sizeInBits="32">
         <FloatDataEncoding sizeInBits="32" encoding="IEEE754_1985" byteOrder="mostSignificantByteFirst" />
       </FloatArgumentType>
