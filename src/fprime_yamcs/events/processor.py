@@ -156,6 +156,7 @@ class FPrimeEventProcessor:
         try:
             # Get event metadata
             event_name = event_data.template.get_name()
+            qualified_name = event_data.template.get_full_name()
             event_id = event_data.id
             severity = event_data.get_severity()
             display_text = event_data.get_display_text()
@@ -213,7 +214,7 @@ class FPrimeEventProcessor:
             self.yamcs_client.send_event(
                 instance=self.yamcs_instance,
                 source='FPrimeEventProcessor',
-                event_type=event_name,
+                event_type=qualified_name,
                 severity=yamcs_severity,
                 message=message,
                 extra=event_args if event_args else None,

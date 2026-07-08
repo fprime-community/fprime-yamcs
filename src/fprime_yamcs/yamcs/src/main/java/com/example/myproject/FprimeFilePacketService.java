@@ -475,6 +475,10 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
             Event evt = (Event) body;
             String type = evt.getType();
             if (type == null) return;
+            int dot = type.lastIndexOf('.');
+            if (dot >= 0) {
+                type = type.substring(dot + 1);
+            }
 
             // Prefer the structured `extra` map if fprime-yamcs-events
             // populated it (patched version >= fprime-community/fprime-yamcs#PR).
