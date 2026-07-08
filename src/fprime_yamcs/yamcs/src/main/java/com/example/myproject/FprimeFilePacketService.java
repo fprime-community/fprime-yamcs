@@ -1198,7 +1198,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
             notifyStateChanged(transfer);
             publishVerifierAck(transfer, AckStatus.NOK,
                     "command dispatch failed: " + e.getMessage());
-            throw new IOException("Failed to dispatch downlink command", e);
+            throw new IOException("Failed to dispatch downlink command: " + e.getMessage(), e);
         }
 
         return transfer;
