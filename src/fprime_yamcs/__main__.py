@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -46,7 +47,7 @@ class YamcsParser(ParserBase):
         return {
             ("--yamcs-config-dir",): {
                 "action": "store",
-                "default": files("fprime_yamcs").joinpath("yamcs/src/main/yamcs"),
+                "default": Path(__file__).resolve().parent / "yamcs" / "src" / "main" / "yamcs",
                 "type": Path,
                 "help": "Specify the YAMCS configuration directory. Default: %(default)s",
             },
@@ -160,7 +161,7 @@ def get_dictionary_constants(dictionary: Path, constants: List[str]) -> str:
     Returns:
         a list of constants found in the dictionary that match the supplied list of constant names
     """
-    with dictionary.open() as f:
+    with open(str(dictionary)) as f:
         dictionary_data = json.load(f)
         constants_data = dictionary_data.get("constants", [])
     found_constants = [
@@ -169,6 +170,31 @@ def get_dictionary_constants(dictionary: Path, constants: List[str]) -> str:
     if len(found_constants) != len(constants):
         raise ValueError(f"Required constants {constants} not found in dictionary")
     return found_constants
+
+
+def patch_boolean_argument_types(xtce_path: Path):
+    """ Rewrite 8-bit bool argument types as 0/255 enumerations to match F Prime's 0xFF/0x00 bool wire format """
+    namespace = "http://www.omg.org/spec/XTCE/20180204"
+    ET.register_namespace("", namespace)
+    tree = ET.parse(xtce_path)
+    for type_set in tree.iter(f"{{{namespace}}}ArgumentTypeSet"):
+        for bool_type in list(type_set):
+            if bool_type.tag != f"{{{namespace}}}BooleanArgumentType":
+                continue
+            encoding = bool_type.find(f"{{{namespace}}}IntegerDataEncoding")
+            if encoding is None or encoding.get("sizeInBits") != "8":
+                continue
+            enum_type = ET.Element(f"{{{namespace}}}EnumeratedArgumentType", {"name": bool_type.get("name")})
+            enum_type.append(encoding)
+            enum_list = ET.SubElement(enum_type, f"{{{namespace}}}EnumerationList")
+            ET.SubElement(enum_list, f"{{{namespace}}}Enumeration",
+                          {"label": bool_type.get("zeroStringValue", "False"), "value": "0"})
+            ET.SubElement(enum_list, f"{{{namespace}}}Enumeration",
+                          {"label": bool_type.get("oneStringValue", "True"), "value": "255"})
+            index = list(type_set).index(bool_type)
+            type_set.remove(bool_type)
+            type_set.insert(index, enum_type)
+    tree.write(xtce_path, xml_declaration=True, encoding="utf-8")
 
 
 def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int) -> Tuple[Path, str]:
@@ -199,6 +225,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
 
     print(f"[INFO] Updating YAMCS XTCE dictionary from {dictionary} to {xtce_dictionary}")
     subprocess.run(["fprime-to-xtce", "-o", str(xtce_dictionary), str(dictionary)], check=True)
+    patch_boolean_argument_types(xtce_dictionary)
 
     print("[INFO] Setting ports for YAMCS UDP processors")
     instance_path = yamcs_working_config_dir / "etc" / f"yamcs.{fprime_instance}.yaml"
@@ -240,7 +267,7 @@ def launch_yamcs(parsed_args):
 
     # Switch to the YAMCS directory and launch YAMCS using Maven
     return launch_process(
-        ["mvn", "-f", str(files("fprime_yamcs").joinpath("yamcs/pom.xml")), "yamcs:run",
+        ["mvn", "-f", str(Path(__file__).resolve().parent / "yamcs" / "pom.xml"), "yamcs:run",
          f"-Dyamcs.configurationDirectory={parsed_args.yamcs_config_dir.absolute()}",
          f"-Dyamcs.directory={parsed_args.yamcs_data_dir.absolute()}"
         ],
