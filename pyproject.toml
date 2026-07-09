@@ -37,7 +37,7 @@ classifiers = [
 
 dependencies = [
     "yamcs-client>=1.12.1",
-    "fprime-xtce>=0.1.2",
+    "fprime-xtce @ git+https://github.com/yvijay99/fprime-xtce.git@yamcsPOC",
     "PyYAML>=6.0.2",
 ]
 
