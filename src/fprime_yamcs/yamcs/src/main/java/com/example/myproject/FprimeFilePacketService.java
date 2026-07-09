@@ -141,9 +141,6 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     // F´ ComCfg::Apid::FW_PACKET_FILE — see lib/fprime/default/config/ComCfg.fpp.
     private static final int DEFAULT_FILE_APID = 3;
 
-    // Mirror path matching fprime-gds default down_store so tests can be transport-agnostic.
-    private static final Path DOWNLINK_MIRROR_DIR = Paths.get("/tmp/fprime-downlink");
-
     // F´ FwPacketDescriptorType is U16. After the CCSDS primary header, the
     // payload starts with this descriptor, which equals FW_PACKET_FILE for
     // file packets. See FileDownlink.cpp:357-359.
@@ -163,6 +160,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     private String inStreamName;
     private String bucketName;
     private int fileApid;
+    private Path downlinkMirrorDir;
 
     // Configuration — uplink
     private String uplinkLinkName;
@@ -294,6 +292,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         spec.addOption("inStream", OptionType.STRING).withDefault("tm_realtime");
         spec.addOption("bucket", OptionType.STRING).withDefault("fprimeFilesIn");
         spec.addOption("fileApid", OptionType.INTEGER).withDefault(DEFAULT_FILE_APID);
+        spec.addOption("downlinkMirrorDir", OptionType.STRING).withDefault("/tmp/fprime-downlink");
         // Route uplink through the YAMCS-configured TC data link. The
         // service expects this link name to resolve to a TcPacketHandler
         // and fails to start otherwise.
@@ -322,6 +321,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         this.inStreamName = config.getString("inStream", "tm_realtime");
         this.bucketName = config.getString("bucket", "fprimeFilesIn");
         this.fileApid = config.getInt("fileApid", DEFAULT_FILE_APID);
+        this.downlinkMirrorDir = Paths.get(config.getString("downlinkMirrorDir", "/tmp/fprime-downlink"));
         this.uplinkLinkName = config.getString("uplinkLink", "UDP_TC_OUT.vc1");
         this.uplinkChunkSize = config.getInt("uplinkChunkSize", 128);
         this.fileDownlinkCommandName = config.getString("fileDownlinkCommand", "");
@@ -332,8 +332,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         this.downloadTimeoutMs = config.getLong("downloadTimeoutMs", 30000L);
 
         LOG.info("FprimeFilePacketService init: inStream={} bucket={} fileApid={}"
-                + " uplinkLink={} chunk={}B",
-                inStreamName, bucketName, fileApid, uplinkLinkName, uplinkChunkSize);
+                + " uplinkLink={} chunk={}B downlinkMirror={}",
+                inStreamName, bucketName, fileApid, uplinkLinkName, uplinkChunkSize, downlinkMirrorDir);
     }
 
     // ----------------------------------------------------------------------
@@ -1011,12 +1011,12 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                     objectName, inflight.bytesReceived, bucketName);
 
             try {
-                Files.createDirectories(DOWNLINK_MIRROR_DIR);
-                Path mirrorPath = DOWNLINK_MIRROR_DIR.resolve(objectName);
+                Files.createDirectories(downlinkMirrorDir);
+                Path mirrorPath = downlinkMirrorDir.resolve(objectName);
                 Files.write(mirrorPath, inflight.reassemblyBuffer);
                 LOG.info("Mirrored downlink file to {}", mirrorPath);
             } catch (IOException e) {
-                LOG.warn("Failed to mirror file to {}: {}", DOWNLINK_MIRROR_DIR, e.getMessage());
+                LOG.warn("Failed to mirror file to {}: {}", downlinkMirrorDir, e.getMessage());
             }
 
             if (inflight.apiTransfer != null) {
