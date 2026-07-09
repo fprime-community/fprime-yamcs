@@ -32,6 +32,7 @@ services:
       bucket: fprimeFilesIn
       fileApid: 3
       downloadTimeoutMs: 8000
+      uplinkChunkSize: 512
 dataLinks:
   - name: UDP_TM_IN
     class: org.yamcs.tctm.ccsds.UdpTmFrameLink
