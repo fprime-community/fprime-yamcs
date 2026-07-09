@@ -26,7 +26,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -172,30 +171,6 @@ def get_dictionary_constants(dictionary: Path, constants: List[str]) -> str:
     return found_constants
 
 
-def patch_boolean_argument_types(xtce_path: Path):
-    """ Rewrite 8-bit bool argument types as 0/255 enumerations to match F Prime's 0xFF/0x00 bool wire format """
-    namespace = "http://www.omg.org/spec/XTCE/20180204"
-    ET.register_namespace("", namespace)
-    tree = ET.parse(xtce_path)
-    for type_set in tree.iter(f"{{{namespace}}}ArgumentTypeSet"):
-        for bool_type in list(type_set):
-            if bool_type.tag != f"{{{namespace}}}BooleanArgumentType":
-                continue
-            encoding = bool_type.find(f"{{{namespace}}}IntegerDataEncoding")
-            if encoding is None or encoding.get("sizeInBits") != "8":
-                continue
-            enum_type = ET.Element(f"{{{namespace}}}EnumeratedArgumentType", {"name": bool_type.get("name")})
-            enum_type.append(encoding)
-            enum_list = ET.SubElement(enum_type, f"{{{namespace}}}EnumerationList")
-            ET.SubElement(enum_list, f"{{{namespace}}}Enumeration",
-                          {"label": bool_type.get("zeroStringValue", "False"), "value": "0"})
-            ET.SubElement(enum_list, f"{{{namespace}}}Enumeration",
-                          {"label": bool_type.get("oneStringValue", "True"), "value": "255"})
-            index = list(type_set).index(bool_type)
-            type_set.remove(bool_type)
-            type_set.insert(index, enum_type)
-    tree.write(xtce_path, xml_declaration=True, encoding="utf-8")
-
 
 def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
@@ -225,7 +200,6 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
 
     print(f"[INFO] Updating YAMCS XTCE dictionary from {dictionary} to {xtce_dictionary}")
     subprocess.run(["fprime-to-xtce", "-o", str(xtce_dictionary), str(dictionary)], check=True)
-    patch_boolean_argument_types(xtce_dictionary)
 
     print("[INFO] Setting ports for YAMCS UDP processors")
     instance_path = yamcs_working_config_dir / "etc" / f"yamcs.{fprime_instance}.yaml"
