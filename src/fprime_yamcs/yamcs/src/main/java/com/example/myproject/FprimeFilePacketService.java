@@ -3,6 +3,9 @@ package com.example.myproject;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -137,6 +140,9 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
     // F´ ComCfg::Apid::FW_PACKET_FILE — see lib/fprime/default/config/ComCfg.fpp.
     private static final int DEFAULT_FILE_APID = 3;
+
+    // Mirror path matching fprime-gds default down_store so tests can be transport-agnostic.
+    private static final Path DOWNLINK_MIRROR_DIR = Paths.get("/tmp/fprime-downlink");
 
     // F´ FwPacketDescriptorType is U16. After the CCSDS primary header, the
     // payload starts with this descriptor, which equals FW_PACKET_FILE for
@@ -1003,6 +1009,16 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                     Map.of(), inflight.reassemblyBuffer).join();
             LOG.info("File transfer COMPLETE: {} ({} bytes) -> bucket {}",
                     objectName, inflight.bytesReceived, bucketName);
+
+            try {
+                Files.createDirectories(DOWNLINK_MIRROR_DIR);
+                Path mirrorPath = DOWNLINK_MIRROR_DIR.resolve(objectName);
+                Files.write(mirrorPath, inflight.reassemblyBuffer);
+                LOG.info("Mirrored downlink file to {}", mirrorPath);
+            } catch (IOException e) {
+                LOG.warn("Failed to mirror file to {}: {}", DOWNLINK_MIRROR_DIR, e.getMessage());
+            }
+
             if (inflight.apiTransfer != null) {
                 inflight.apiTransfer.setTransferredSize(inflight.bytesReceived);
                 inflight.apiTransfer.setState(TransferState.COMPLETED);
