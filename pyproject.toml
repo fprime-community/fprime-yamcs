@@ -39,7 +39,7 @@ dependencies = [
     "yamcs-client>=1.12.1",
     "fprime-xtce>=0.1.2",
     "PyYAML>=6.0.2",
-    "fprime-gds>=4.1.0"
+    "fprime-gds @ git+https://github.com/YuktiVijay/fprime-gds.git@yamcspoc"
 ]
 
 [project.urls]
