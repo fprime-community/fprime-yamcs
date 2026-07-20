@@ -26,14 +26,22 @@ services:
       restart: "always"
       logLevel: INFO
   # Reassembles Fw::FilePacket downlinks (APID 3) into the fprimeFilesIn bucket.
+  
+  # Environment variables to set before starting YAMCS
+  # FPRIME_UPLINK_CHUNK_SIZE - Bytes per uplink data packet
+  # Set by: export FPRIME_UPLINK_CHUNK_SIZE=1024
+  # FPRIME_DOWNLINK_DIR - Directory to mirror downloaded files
+  # Set by: export FPRIME_DOWNLINK_DIR=/custom/downlink/path
+
   - class: com.example.myproject.FprimeFilePacketService
     args:
       inStream: tm_realtime
       bucket: fprimeFilesIn
       fileApid: 3
       downloadTimeoutMs: 8000
-      uplinkChunkSize: 512
-      downlinkMirrorDir: /tmp/runner/fprime-downlink
+      uplinkChunkSize: ${FPRIME_UPLINK_CHUNK_SIZE:512}
+      downlinkMirrorDir: ${FPRIME_DOWNLINK_DIR:/tmp/runner/fprime-downlink}
+      
 dataLinks:
   - name: UDP_TM_IN
     class: org.yamcs.tctm.ccsds.UdpTmFrameLink
