@@ -51,6 +51,10 @@ Issues = "https://github.com/fprime-community/fprime-yamcs/issues"
 [project.scripts]
 fprime-yamcs-events = "fprime_yamcs.events.__main__:main"
 fprime-yamcs = "fprime_yamcs.__main__:main"
+fprime-yamcs-comm = "fprime_yamcs.comm.__main__:main"
+
+[project.entry-points.fprime_gds]
+fprime_yamcs_comm_framing = "fprime_yamcs.comm.framing:NoOpFramerDeframer"
 
 [tool.setuptools]
 include-package-data = true
