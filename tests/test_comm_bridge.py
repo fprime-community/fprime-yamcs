@@ -5,6 +5,7 @@ the full bridge: a socat-provided PTY pair stands in for a UART endpoint on one 
 UDP sockets stand in for the YAMCS intake/outlet on the other.
 """
 
+import logging
 import os
 import shutil
 import signal
@@ -350,19 +351,21 @@ class TestBridgeRobustness:
         assert failed.wait(timeout=TIMEOUT)
         bridge.stop()
 
-    def test_pending_overflow_dropped(self):
+    def test_pending_overflow_dropped(self, caplog):
         """Undeframable pending data must be dropped once it exceeds the cap"""
         chunk = b"x" * (MAXIMUM_PENDING_SIZE // 2)
         adapter = StubAdapter(reads=[chunk, chunk, chunk, b"final"])
         udp = StubUdp()
         bridge = UdpBridge(adapter, WithholdingFramer(), udp)
-        bridge.start()
-        end = time.time() + TIMEOUT
-        while time.time() < end and adapter.reads:
-            time.sleep(0.05)
-        bridge.stop()
+        with caplog.at_level(logging.WARNING, logger="fprime_yamcs.comm.bridge"):
+            bridge.start()
+            end = time.time() + TIMEOUT
+            while time.time() < end and adapter.reads:
+                time.sleep(0.05)
+            bridge.stop()
         assert not adapter.reads, "Bridge stalled instead of dropping pending data"
         assert udp.sent == []
+        assert "Dropping" in caplog.text
 
 
 class TestCliValidation:
@@ -379,18 +382,13 @@ class TestCliValidation:
         assert result.returncode != 0
         assert "Invalid UDP port" in result.stderr
 
-    def test_unresolvable_host_rejected(self):
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "fprime_yamcs.comm",
-                "--tm-host",
-                "no-such-host.invalid",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT * 3,
-        )
-        assert result.returncode != 0
-        assert "Failed to resolve" in result.stderr
+    def test_unresolvable_host_rejected(self, monkeypatch):
+        """Host resolution failures must surface as OSError (main exits 1 on it)"""
+
+        def fail_resolution(_):
+            raise socket.gaierror("resolution failed")
+
+        # Patched to avoid live DNS egress from the test suite
+        monkeypatch.setattr(socket, "gethostbyname", fail_resolution)
+        with pytest.raises(OSError):
+            YamcsUdp("no-such-host.invalid", 50000, "127.0.0.1", 50001)
