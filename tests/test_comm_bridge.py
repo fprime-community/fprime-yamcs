@@ -11,12 +11,14 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from fprime_gds.common.communication.framing import FpFramerDeframer
+from fprime_yamcs.comm.bridge import MAXIMUM_PENDING_SIZE, UdpBridge
 from fprime_yamcs.comm.framing import NoOpFramerDeframer
 
 SOCAT = shutil.which("socat")
@@ -53,14 +55,12 @@ class TestNoOpFramerDeframer:
         assert discarded == b""
 
 
-def wait_for_udp_bind(port, timeout=TIMEOUT):
-    """Wait until some process has bound the given local UDP port (per /proc/net/udp)"""
+def wait_for_line(lines, needle, timeout=TIMEOUT):
+    """Wait until a line containing `needle` appears in the growing `lines` list"""
     end = time.time() + timeout
-    port_hex = f":{port:04X}"
     while time.time() < end:
-        with open("/proc/net/udp") as table:
-            if any(line.split()[1].endswith(port_hex) for line in table.readlines()[1:]):
-                return True
+        if any(needle in line for line in lines):
+            return True
         time.sleep(0.05)
     return False
 
@@ -116,7 +116,9 @@ def start_bridge(uart_device: Path, tm_port: int, tc_port: int, framing: str):
             str(tm_port),
             "--tc-port",
             str(tc_port),
-        ]
+        ],
+        stderr=subprocess.PIPE,
+        text=True,
     )
 
 
@@ -132,14 +134,20 @@ def bridge_setup(request, pty_pair, unused_udp_ports):
     tc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     bridge = start_bridge(link_a, tm_port, tc_port, request.param)
+    stderr_lines = []
+    reader = threading.Thread(
+        target=lambda: stderr_lines.extend(iter(bridge.stderr.readline, "")),
+        daemon=True,
+    )
+    reader.start()
     peer_fd = os.open(link_b, os.O_RDWR | os.O_NONBLOCK)
-    # Wait for the bridge to bind its TC port (last resource opened before the pumps start)
-    assert wait_for_udp_bind(tc_port), "Bridge failed to bind its TC port"
-    time.sleep(0.5)
+    # Wait for the bridge to report that both data pumps are running
+    assert wait_for_line(stderr_lines, "Bridge up"), "Bridge failed to start"
     assert bridge.poll() is None, "Bridge process exited prematurely"
-    yield request.param, peer_fd, tm_socket, tc_socket, tc_port
+    yield request.param, peer_fd, tm_socket, tc_socket, tc_port, stderr_lines
     bridge.send_signal(signal.SIGINT)
     bridge.wait(timeout=TIMEOUT)
+    reader.join(timeout=TIMEOUT)
     os.close(peer_fd)
     tm_socket.close()
     tc_socket.close()
@@ -171,9 +179,15 @@ class TestBridgeFlow:
         finally:
             tm_socket.settimeout(TIMEOUT)
 
+    def test_boundary_warning(self, bridge_setup):
+        """The stream-adapter boundary warning must fire for no-op framing only"""
+        framing, _, _, _, _, stderr_lines = bridge_setup
+        warned = any("cannot preserve" in line for line in stderr_lines)
+        assert warned == (framing == "no-op")
+
     def test_uart_to_udp(self, bridge_setup):
         """Endpoint -> bridge -> YAMCS UDP intake"""
-        framing, peer_fd, tm_socket, _, _ = bridge_setup
+        framing, peer_fd, tm_socket, _, _, _ = bridge_setup
         payload = b"telemetry-packet-payload"
         wire_data = (
             payload if framing == "no-op" else FpFramerDeframer().frame(payload)
@@ -185,7 +199,7 @@ class TestBridgeFlow:
 
     def test_uart_to_udp_split_frame(self, bridge_setup):
         """A frame split across adapter reads must be reassembled into one packet"""
-        framing, peer_fd, tm_socket, _, _ = bridge_setup
+        framing, peer_fd, tm_socket, _, _, _ = bridge_setup
         if framing != "fprime":
             pytest.skip("reassembly across reads requires a boundary-recovering framer")
         payload = b"telemetry-packet-payload"
@@ -200,7 +214,7 @@ class TestBridgeFlow:
 
     def test_uart_garbage_discarded(self, bridge_setup):
         """Unframed garbage must not reach the YAMCS TM intake"""
-        framing, peer_fd, tm_socket, _, _ = bridge_setup
+        framing, peer_fd, tm_socket, _, _, _ = bridge_setup
         if framing != "fprime":
             pytest.skip("garbage rejection applies to fprime framing only")
         os.write(peer_fd, b"\x00\x01garbage-without-start-word")
@@ -213,7 +227,7 @@ class TestBridgeFlow:
 
     def test_udp_to_uart(self, bridge_setup):
         """YAMCS UDP outlet -> bridge -> endpoint"""
-        framing, peer_fd, _, tc_socket, tc_port = bridge_setup
+        framing, peer_fd, _, tc_socket, tc_port = bridge_setup[:5]
         payload = b"command-packet-payload"
         tc_socket.sendto(payload, ("127.0.0.1", tc_port))
         expected = (
@@ -223,6 +237,97 @@ class TestBridgeFlow:
         assert received == expected
         # No trailing or duplicated bytes may follow the expected frame
         assert read_available(peer_fd, minimum=1, timeout=0.5) == b""
+
+    def test_udp_to_uart_unexpected_source_dropped(self, bridge_setup):
+        """TC datagrams from sources outside the allowed set must not reach the endpoint"""
+        _, peer_fd, _, _, tc_port, _ = bridge_setup
+        rogue = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rogue.bind(("127.0.0.2", 0))
+        rogue.sendto(b"rogue-command", ("127.0.0.1", tc_port))
+        rogue.close()
+        assert read_available(peer_fd, minimum=1, timeout=1.0) == b""
+
+
+class StubAdapter:
+    """Minimal communication adapter stub for unit-testing the bridge loops"""
+
+    def __init__(self, reads=None, fail=False):
+        self.reads = list(reads or [])
+        self.fail = fail
+        self.written = []
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+    def read(self):
+        if self.fail:
+            raise RuntimeError("adapter read failure")
+        return self.reads.pop(0) if self.reads else b""
+
+    def write(self, data):
+        self.written.append(data)
+        return True
+
+
+class StubUdp:
+    """Minimal YamcsUdp stub for unit-testing the bridge loops"""
+
+    def __init__(self):
+        self.sent = []
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+    def send(self, packet):
+        self.sent.append(packet)
+        return True
+
+    def receive(self):
+        return None
+
+
+class WithholdingFramer(NoOpFramerDeframer):
+    """Framer stub that never yields packets, leaving all input pending"""
+
+    def deframe(self, data, no_copy=False):
+        return None, data, b""
+
+
+class TestBridgeRobustness:
+    """Unit tests for the bridge failure and overflow handling"""
+
+    def test_failure_handler_fires_on_loop_exception(self):
+        """An abnormal pump-thread exit must invoke the failure handler"""
+        failed = threading.Event()
+        bridge = UdpBridge(
+            StubAdapter(fail=True),
+            NoOpFramerDeframer(),
+            StubUdp(),
+            failure_handler=failed.set,
+        )
+        bridge.start()
+        assert failed.wait(timeout=TIMEOUT)
+        bridge.stop()
+
+    def test_pending_overflow_dropped(self):
+        """Undeframable pending data must be dropped once it exceeds the cap"""
+        chunk = b"x" * (MAXIMUM_PENDING_SIZE // 2)
+        adapter = StubAdapter(reads=[chunk, chunk, chunk, b"final"])
+        udp = StubUdp()
+        bridge = UdpBridge(adapter, WithholdingFramer(), udp)
+        bridge.start()
+        end = time.time() + TIMEOUT
+        while time.time() < end and adapter.reads:
+            time.sleep(0.05)
+        bridge.stop()
+        assert not adapter.reads, "Bridge stalled instead of dropping pending data"
+        assert udp.sent == []
 
 
 class TestCliValidation:

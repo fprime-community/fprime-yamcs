@@ -31,13 +31,17 @@ class YamcsUdp:
             tm_port: port of the YAMCS UDP telemetry intake
             tc_host: local address to bind for receiving YAMCS command datagrams
             tc_port: local port to bind for receiving YAMCS command datagrams
-            tc_sources: iterable of additional source addresses allowed to send
-                command datagrams; the TM host and loopback are always allowed
+            tc_sources: iterable of additional source hosts allowed to send
+                command datagrams; the TM host and loopback are always allowed.
+                Hostnames are resolved to IPv4 addresses at construction time.
             timeout: receive timeout in seconds allowing periodic shutdown checks
         """
         self.tm_destination = (tm_host, tm_port)
         self.tc_bind = (tc_host, tc_port)
-        self.allowed_sources = {tm_host, "127.0.0.1"} | set(tc_sources or [])
+        self.allowed_sources = {
+            socket.gethostbyname(source)
+            for source in {tm_host, "127.0.0.1"} | set(tc_sources or [])
+        }
         self.timeout = timeout
         self.tm_socket = None
         self.tc_socket = None

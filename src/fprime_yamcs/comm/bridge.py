@@ -56,6 +56,7 @@ class UdpBridge:
         self.adapter.open()
         self.downlink_thread.start()
         self.uplink_thread.start()
+        LOGGER.info("Bridge up: downlink and uplink pumps running")
 
     def stop(self):
         """Stop the data pump threads and release resources"""

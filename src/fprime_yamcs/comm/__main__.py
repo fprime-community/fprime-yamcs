@@ -118,15 +118,21 @@ def main():
             "packet boundaries: packets may be split or merged across UDP datagrams "
             "depending on read timing. Use a boundary-recovering framing plugin "
             "(e.g. --framing-selection fprime) unless the endpoint stream carries "
-            "self-delimiting data that YAMCS deframes.",
+            "self-delimiting data that YAMCS deframes. Note: this detection covers "
+            "only the built-in stream adapters; third-party stream adapters are not "
+            "detected.",
             args.communication_selection,
         )
 
     adapter = Plugins.system().get_selected_class("communication")()
     framer = Plugins.system().get_selected_class("framing")()
-    udp = YamcsUdp(
-        args.tm_host, args.tm_port, args.tc_host, args.tc_port, args.tc_sources
-    )
+    try:
+        udp = YamcsUdp(
+            args.tm_host, args.tm_port, args.tc_host, args.tc_port, args.tc_sources
+        )
+    except OSError as error:
+        LOGGER.error("Failed to resolve YAMCS UDP hosts: %s", error)
+        return 1
     LOGGER.info(
         "Bridging '%s' adapter and YAMCS UDP using '%s' framing",
         args.communication_selection,
