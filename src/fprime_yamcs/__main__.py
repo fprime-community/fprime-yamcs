@@ -251,7 +251,10 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
             link["frameLength"] = constants[0]
             link["spacecraftId"] = constants[1]
             for vc in link.get("virtualChannels", []):
-                vc["maxPacketLength"] = constants[0]
+                # Space packets may span multiple TM frames (e.g. large telemetry
+                # channels), so the maximum packet length is independent of (and can
+                # exceed) the frame size. Allow the CCSDS maximum: 65536 + 6 header bytes.
+                vc["maxPacketLength"] = 65542
                 if realtime_only_ids:
                     vc.setdefault("packetPreprocessorArgs", {})["doNotArchiveChannelIds"] = realtime_only_ids
         elif link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTcFrameLink":
@@ -291,7 +294,10 @@ def launch_yamcs(parsed_args):
     return launch_process(
         ["mvn", "-f", str(Path(__file__).resolve().parent / "yamcs" / "pom.xml"), "yamcs:run",
          f"-Dyamcs.configurationDirectory={parsed_args.yamcs_config_dir.absolute()}",
-         f"-Dyamcs.directory={parsed_args.yamcs_data_dir.absolute()}"
+         f"-Dyamcs.directory={parsed_args.yamcs_data_dir.absolute()}",
+         # High-rate telemetry (many packets/s) needs more heap than the JVM
+         # default of 1/4 of physical RAM allows on small machines.
+         "-Dyamcs.jvmArgs=-Xmx4g"
         ],
                           env=environment)
 
