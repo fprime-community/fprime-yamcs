@@ -2,7 +2,9 @@ package com.example.myproject;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.yamcs.TmPacket;
@@ -41,6 +43,7 @@ public class FprimePacketPreprocessor extends AbstractPacketPreprocessor {
     private static final int FwTimeBaseStoreType_SIZE = 2;
     private static final int FwTimeContextStoreType_SIZE = 1;
     private static final int FwEventIdType_SIZE = 4;
+    private static final int FwChanIdType_SIZE = 4;
 
     private static final int TLM_TIME_TAG_OFFSET = SPACE_PACKET_HEADER_LEN + FwPacketDescriptorType_SIZE
             + FwTlmPacketizeIdType_SIZE + FwTimeBaseStoreType_SIZE + FwTimeContextStoreType_SIZE;
@@ -48,9 +51,20 @@ public class FprimePacketPreprocessor extends AbstractPacketPreprocessor {
     private static final int EVENT_TIME_TAG_OFFSET = SPACE_PACKET_HEADER_LEN + FwPacketDescriptorType_SIZE
             + FwEventIdType_SIZE + FwTimeBaseStoreType_SIZE + FwTimeContextStoreType_SIZE;
 
+    private static final int CHAN_ID_OFFSET = SPACE_PACKET_HEADER_LEN + FwPacketDescriptorType_SIZE;
+
+    private static final int CHAN_TIME_TAG_OFFSET = SPACE_PACKET_HEADER_LEN + FwPacketDescriptorType_SIZE
+            + FwChanIdType_SIZE + FwTimeBaseStoreType_SIZE + FwTimeContextStoreType_SIZE;
+
     // APIDs
+    private static final int APID_TLM_CHAN = 1; // default F' APID for telemetry channels
     private static final int APID_EVENT = 2; // default F' APID for events
     private static final int APID_TLM_PKT = 4; // default F' APID for telemetry packets
+
+    // Telemetry channel ids whose packets are marked "do not archive": they remain
+    // available on the realtime processor but are skipped by the XtceTmRecorder and
+    // thus never reach the tm table nor the (backfilled) parameter archive.
+    private final Set<Long> doNotArchiveChannelIds = new HashSet<>();
 
     // Constructor used when this preprocessor is used without YAML configuration
     public FprimePacketPreprocessor(String yamcsInstance) {
@@ -61,6 +75,11 @@ public class FprimePacketPreprocessor extends AbstractPacketPreprocessor {
     // (packetPreprocessorClassArgs)
     public FprimePacketPreprocessor(String yamcsInstance, YConfiguration config) {
         super(yamcsInstance, config);
+        if (config.containsKey("doNotArchiveChannelIds")) {
+            for (Object id : config.getList("doNotArchiveChannelIds")) {
+                doNotArchiveChannelIds.add(((Number) id).longValue());
+            }
+        }
     }
 
     @Override
@@ -94,6 +113,14 @@ public class FprimePacketPreprocessor extends AbstractPacketPreprocessor {
             time_tag_offset = EVENT_TIME_TAG_OFFSET;
         } else if (apid == APID_TLM_PKT) {
             time_tag_offset = TLM_TIME_TAG_OFFSET;
+        } else if (apid == APID_TLM_CHAN) {
+            time_tag_offset = CHAN_TIME_TAG_OFFSET;
+            if (!doNotArchiveChannelIds.isEmpty() && bytes.length >= CHAN_ID_OFFSET + FwChanIdType_SIZE) {
+                long channelId = ByteBuffer.wrap(bytes).getInt(CHAN_ID_OFFSET) & 0xFFFFFFFFL;
+                if (doNotArchiveChannelIds.contains(channelId)) {
+                    packet.setDoNotArchive();
+                }
+            }
         }
         // Weird stuff with leap seconds, see
         // https://docs.yamcs.org/yamcs-server-manual/general/time/

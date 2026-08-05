@@ -20,6 +20,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import atexit
+import fnmatch
 import os
 import json
 import shutil
@@ -61,6 +62,14 @@ class YamcsParser(ParserBase):
                 "default": None,
                 "type": Path,
                 "help": "Specify the YAMCS instance to use for fprime-events",
+            },
+            ("--yamcs-realtime-only-channels",): {
+                "action": "store",
+                "nargs": "+",
+                "default": [],
+                "metavar": "CHANNEL",
+                "help": "Telemetry channel names (fnmatch globs allowed, e.g. 'Doom.doom.FrameOut*') kept "
+                        "realtime-only: their packets are not recorded and never enter the parameter archive.",
             },
             ("--udp-uplink-port", ): {
                 "action": "store",
@@ -172,7 +181,30 @@ def get_dictionary_constants(dictionary: Path, constants: List[str]) -> str:
 
 
 
-def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int) -> Tuple[Path, str]:
+def get_channel_ids(dictionary: Path, channel_patterns: List[str]) -> List[int]:
+    """ Resolve telemetry channel name patterns to channel ids
+
+    Matches each supplied pattern (fnmatch glob) against the qualified telemetry channel names in the F Prime
+    dictionary and returns the ids of all matching channels.
+
+    Args:
+        dictionary: The path to the F Prime dictionary file
+        channel_patterns: A list of channel name patterns (fnmatch globs)
+    Returns:
+        A sorted list of matching telemetry channel ids
+    """
+    with open(str(dictionary)) as f:
+        channels = json.load(f).get("telemetryChannels", [])
+    channel_ids = set()
+    for pattern in channel_patterns:
+        matches = [channel["id"] for channel in channels if fnmatch.fnmatchcase(channel["name"], pattern)]
+        if not matches:
+            raise ValueError(f"Realtime-only channel pattern '{pattern}' matched no telemetry channels")
+        channel_ids.update(matches)
+    return sorted(channel_ids)
+
+
+def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, realtime_only_channels: List[str]) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
 
     The YAMCS configuration that ships with fprime-yamcs needs to be modified in several specific ways before running
@@ -180,12 +212,15 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         1. Updating the XTCE MDB file with the converted F Prime dictionary
         2. Updating the TM/TC processors to use the correct UDP ports
         3. Updating the TM/TC processors to use the correct dictionary constants
+        4. Marking realtime-only telemetry channels as "do not archive" and switching the parameter
+           archive to backfilling so those channels never reach the archives
     Args:
         config_directory: The YAMCS configuration directory to use as a base for the temporary configuration
         instances: A list of YAMCS instance names to consider for configuration
         dictionary: The path to the F Prime dictionary file to convert and use for the XTCE MDB
         uplink_port: The UDP port to use for uplink (TC) communication with YAMCS
         downlink_port: The UDP port to use for downlink (TM) communication with YAMCS
+        realtime_only_channels: Telemetry channel name patterns to keep realtime-only (not archived)
     Returns:
         The path to the temporary YAMCS configuration directory and the fprime identified instance
     """
@@ -207,6 +242,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
     with instance_path.open() as f:
         instance_config = yaml.safe_load(f)
     constants = get_dictionary_constants(dictionary, ["ComCfg.TmFrameFixedSize", "ComCfg.SpacecraftId"])
+    realtime_only_ids = get_channel_ids(dictionary, realtime_only_channels)
     for link in instance_config.get("dataLinks", []):
         print(link)
         if link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTmFrameLink":
@@ -216,11 +252,23 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
             link["spacecraftId"] = constants[1]
             for vc in link.get("virtualChannels", []):
                 vc["maxPacketLength"] = constants[0]
+                if realtime_only_ids:
+                    vc.setdefault("packetPreprocessorArgs", {})["doNotArchiveChannelIds"] = realtime_only_ids
         elif link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTcFrameLink":
             print(f"[INFO] Setting downlink port for TM link {link.get('name', '')} to {downlink_port}")
             link["port"] = uplink_port
             link["maxFrameLength"] = constants[0]
             link["spacecraftId"] = constants[1]
+    if realtime_only_ids:
+        print(f"[INFO] Keeping {len(realtime_only_ids)} telemetry channels realtime-only (not archived)")
+        # The realtime filler archives parameters straight off the realtime processor, which would
+        # bypass the "do not archive" packet flag. Switch to backfilling from the recorded tm table
+        # (where the flagged packets are absent) so the excluded channels never reach the archive.
+        for service in instance_config.get("services", []):
+            if service.get("class", "") == "org.yamcs.parameterarchive.ParameterArchive":
+                args = service.setdefault("args", {})
+                args.setdefault("realtimeFiller", {})["enabled"] = False
+                args.setdefault("backFiller", {})["automaticBackfilling"] = True
     with instance_path.open("w") as f:
         yaml.safe_dump(instance_config, f)
 
@@ -281,7 +329,7 @@ def main():
         if not instances:
             raise Exception(f"No YAMCS instances found in {parsed_args.yamcs_config_dir / 'etc/yamcs.yaml'}")
 
-        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port)
+        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port, parsed_args.yamcs_realtime_only_channels)
         parsed_args.yamcs_config_dir = yamcs_config_dir
         if parsed_args.yamcs_events_instance is None:
             parsed_args.yamcs_events_instance = fprime_instance
