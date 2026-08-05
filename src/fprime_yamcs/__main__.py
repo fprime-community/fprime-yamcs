@@ -204,6 +204,31 @@ def get_channel_ids(dictionary: Path, channel_patterns: List[str]) -> List[int]:
     return sorted(channel_ids)
 
 
+def get_packet_ids(dictionary: Path, channel_patterns: List[str]) -> List[int]:
+    """ Resolve telemetry channel name patterns to packetized-telemetry packet ids
+
+    Deployments using Svc.TlmPacketizer downlink telemetry as packets (APID 4) rather than
+    individual channel samples (APID 1). Any packet containing a channel that matches one of
+    the supplied patterns is treated as realtime-only.
+
+    Args:
+        dictionary: The path to the F Prime dictionary file
+        channel_patterns: A list of channel name patterns (fnmatch globs)
+    Returns:
+        A sorted list of packet ids whose member channels match any pattern
+    """
+    with open(str(dictionary)) as f:
+        packet_sets = json.load(f).get("telemetryPacketSets", [])
+    packet_ids = set()
+    for packet_set in packet_sets:
+        for packet in packet_set.get("members", []):
+            if any(fnmatch.fnmatchcase(member, pattern)
+                   for member in packet.get("members", [])
+                   for pattern in channel_patterns):
+                packet_ids.add(packet["id"])
+    return sorted(packet_ids)
+
+
 def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, realtime_only_channels: List[str]) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
 
@@ -243,6 +268,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         instance_config = yaml.safe_load(f)
     constants = get_dictionary_constants(dictionary, ["ComCfg.TmFrameFixedSize", "ComCfg.SpacecraftId"])
     realtime_only_ids = get_channel_ids(dictionary, realtime_only_channels)
+    realtime_only_packet_ids = get_packet_ids(dictionary, realtime_only_channels) if realtime_only_channels else []
     for link in instance_config.get("dataLinks", []):
         print(link)
         if link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTmFrameLink":
@@ -257,13 +283,16 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
                 vc["maxPacketLength"] = 65542
                 if realtime_only_ids:
                     vc.setdefault("packetPreprocessorArgs", {})["doNotArchiveChannelIds"] = realtime_only_ids
+                if realtime_only_packet_ids:
+                    vc.setdefault("packetPreprocessorArgs", {})["doNotArchivePacketIds"] = realtime_only_packet_ids
         elif link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTcFrameLink":
             print(f"[INFO] Setting downlink port for TM link {link.get('name', '')} to {downlink_port}")
             link["port"] = uplink_port
             link["maxFrameLength"] = constants[0]
             link["spacecraftId"] = constants[1]
     if realtime_only_ids:
-        print(f"[INFO] Keeping {len(realtime_only_ids)} telemetry channels realtime-only (not archived)")
+        print(f"[INFO] Keeping {len(realtime_only_ids)} telemetry channels "
+              f"and {len(realtime_only_packet_ids)} telemetry packets realtime-only (not archived)")
         # The realtime filler archives parameters straight off the realtime processor, which would
         # bypass the "do not archive" packet flag. Switch to backfilling from the recorded tm table
         # (where the flagged packets are absent) so the excluded channels never reach the archive.
