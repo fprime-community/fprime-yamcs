@@ -20,6 +20,7 @@ import pytest
 from fprime_gds.common.communication.framing import FpFramerDeframer
 from fprime_yamcs.comm.bridge import MAXIMUM_PENDING_SIZE, UdpBridge
 from fprime_yamcs.comm.framing import NoOpFramerDeframer
+from fprime_yamcs.comm.udp import YamcsUdp
 
 SOCAT = shutil.which("socat")
 TIMEOUT = 10.0
@@ -182,6 +183,8 @@ class TestBridgeFlow:
     def test_boundary_warning(self, bridge_setup):
         """The stream-adapter boundary warning must fire for no-op framing only"""
         framing, _, _, _, _, stderr_lines = bridge_setup
+        # main() emits the boundary warning before the "Bridge up" line the fixture
+        # waits on, so the absence check below is race-free
         warned = any("cannot preserve" in line for line in stderr_lines)
         assert warned == (framing == "no-op")
 
@@ -227,7 +230,7 @@ class TestBridgeFlow:
 
     def test_udp_to_uart(self, bridge_setup):
         """YAMCS UDP outlet -> bridge -> endpoint"""
-        framing, peer_fd, _, tc_socket, tc_port = bridge_setup[:5]
+        framing, peer_fd, _, tc_socket, tc_port, _ = bridge_setup
         payload = b"command-packet-payload"
         tc_socket.sendto(payload, ("127.0.0.1", tc_port))
         expected = (
@@ -240,12 +243,44 @@ class TestBridgeFlow:
 
     def test_udp_to_uart_unexpected_source_dropped(self, bridge_setup):
         """TC datagrams from sources outside the allowed set must not reach the endpoint"""
-        _, peer_fd, _, _, tc_port, _ = bridge_setup
+        framing, peer_fd, _, tc_socket, tc_port, _ = bridge_setup
         rogue = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         rogue.bind(("127.0.0.2", 0))
         rogue.sendto(b"rogue-command", ("127.0.0.1", tc_port))
         rogue.close()
         assert read_available(peer_fd, minimum=1, timeout=1.0) == b""
+        # Positive control: an allowed-source datagram must still flow, proving the
+        # uplink pump is alive and only the rogue datagram was filtered
+        payload = b"allowed-command"
+        tc_socket.sendto(payload, ("127.0.0.1", tc_port))
+        expected = (
+            payload if framing == "no-op" else FpFramerDeframer().frame(payload)
+        )
+        assert read_available(peer_fd, minimum=len(expected)) == expected
+
+
+class TestYamcsUdpSources:
+    """Unit tests for TC source resolution and filtering"""
+
+    def test_hostnames_resolved(self):
+        """Configured hostnames must resolve to numeric addresses"""
+        udp = YamcsUdp("localhost", 50000, "127.0.0.1", 50001, ["localhost"])
+        assert "127.0.0.1" in udp.allowed_sources
+        assert all("localhost" != source for source in udp.allowed_sources)
+
+    def test_extra_source_accepted(self):
+        """A datagram from a --tc-allowed-source address must be accepted"""
+        udp = YamcsUdp("127.0.0.1", 50000, "127.0.0.1", 0, ["127.0.0.2"])
+        udp.open()
+        try:
+            tc_port = udp.tc_socket.getsockname()[1]
+            sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sender.bind(("127.0.0.2", 0))
+            sender.sendto(b"extra-source-command", ("127.0.0.1", tc_port))
+            sender.close()
+            assert udp.receive() == b"extra-source-command"
+        finally:
+            udp.close()
 
 
 class StubAdapter:
@@ -343,3 +378,19 @@ class TestCliValidation:
         )
         assert result.returncode != 0
         assert "Invalid UDP port" in result.stderr
+
+    def test_unresolvable_host_rejected(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "fprime_yamcs.comm",
+                "--tm-host",
+                "no-such-host.invalid",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT * 3,
+        )
+        assert result.returncode != 0
+        assert "Failed to resolve" in result.stderr
