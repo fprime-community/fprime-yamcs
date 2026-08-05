@@ -13,6 +13,21 @@ fprime-yamcs is designed to run YAMCS as the ground system when working with fpr
 
 Install this package and run `fprime-yamcs` on a compatible F Prime deployment.
 
+## fprime-yamcs-comm: Communication Bridge
+
+`fprime-yamcs-comm` bridges bidirectional communication between an F Prime endpoint and the YAMCS UDP intake/outlet:
+
+- The endpoint side is reached through an F Prime GDS **communication adapter plugin** (`--communication-selection`: `uart`, `ip`, or any installed adapter plugin).
+- The YAMCS side pushes deframed packets as UDP datagrams to the telemetry intake (`--tm-host`/`--tm-port`) and receives command datagrams on a local UDP port (`--tc-host`/`--tc-port`).
+- One stage of framing/deframing sits in between, provided by an F Prime GDS **framing plugin** (`--framing-selection`). The default is the packaged `no-op` framer/deframer, which passes data through unchanged since YAMCS nominally performs framing/deframing itself. Select `fprime` to apply the standard F Prime framing (start word, length, data, checksum) on the endpoint side.
+
+Example, bridging a UART device to YAMCS with no additional framing:
+
+```
+fprime-yamcs-comm --communication-selection uart --uart-device /dev/ttyUSB0 --uart-baud 115200 \
+    --tm-host 127.0.0.1 --tm-port 50000 --tc-port 50001
+```
+
 ## Configuration 
 
 YAMCS is powerful and has many configuration properties. `fprime-yamcs` requires one instance of YAMCS defined in the configuration to have the following MDB:
