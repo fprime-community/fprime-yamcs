@@ -1,5 +1,9 @@
 services:
+  # Record only the split/processed TM streams; tm_raw carries aggregated
+  # Fw::TlmPacket packets that are re-emitted (split) onto tm_realtime.
   - class: org.yamcs.archive.XtceTmRecorder
+    args:
+      streams: ["tm_realtime", "tm_dump"]
   - class: org.yamcs.archive.ParameterRecorder
   - class: org.yamcs.archive.AlarmRecorder
   - class: org.yamcs.archive.EventRecorder
@@ -25,6 +29,15 @@ services:
       command: ["fprime-yamcs-events"]
       restart: "always"
       logLevel: INFO
+  # Splits aggregated F Prime telemetry packets (APID 1) from tm_raw into
+  # single-entry CCSDS packets on tm_realtime. The channelValueSizes map is
+  # injected at runtime by fprime-yamcs from the F Prime JSON dictionary.
+  - class: com.example.myproject.FprimeTlmPacketSplitService
+    args:
+      inStream: tm_raw
+      outStream: tm_realtime
+      tlmApid: 1
+
   # Reassembles Fw::FilePacket downlinks (APID 3) into the fprimeFilesIn bucket.
   
   # Environment variables to set before starting YAMCS
@@ -56,7 +69,7 @@ dataLinks:
         service: "PACKET"
         maxPacketLength: 1024
         packetPreprocessorClassName: com.example.myproject.FprimePacketPreprocessor
-        stream: "tm_realtime"
+        stream: "tm_raw"
 
   - name: UDP_TC_OUT
     class: org.yamcs.tctm.ccsds.UdpTcFrameLink
@@ -84,6 +97,9 @@ mdb:
 # Configuration for streams created at server startup
 streamConfig:
   tm:
+    # Raw packets from the data link; consumed by FprimeTlmPacketSplitService
+    # which forwards (and splits aggregated telemetry) onto tm_realtime.
+    - name: "tm_raw"
     - name: "tm_realtime"
       processor: "realtime"
     - name: "tm_dump"

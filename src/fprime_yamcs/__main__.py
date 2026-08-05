@@ -204,6 +204,84 @@ def get_channel_ids(dictionary: Path, channel_patterns: List[str]) -> List[int]:
     return sorted(channel_ids)
 
 
+# Serialized sizes (bytes) of F Prime primitive types
+PRIMITIVE_TYPE_SIZES = {
+    "I8": 1, "U8": 1, "bool": 1,
+    "I16": 2, "U16": 2,
+    "I32": 4, "U32": 4, "F32": 4,
+    "I64": 8, "U64": 8, "F64": 8,
+}
+# Marker: value is a string, walkable at runtime via its 2-byte length prefix
+SIZE_STRING = -1
+# Marker: value size is unknown (variable-size non-string type)
+SIZE_UNKNOWN = 0
+
+
+def compute_channel_value_sizes(dictionary: Path) -> Dict[str, int]:
+    """ Compute a channel-id to serialized-value-size map from the F Prime dictionary
+
+    Walks the telemetry channels of the F Prime JSON dictionary and computes the serialized size in
+    bytes of each channel's value. Sizes are used by the YAMCS-side FprimeTlmPacketSplitService to
+    walk the entries of aggregated Fw::TlmPacket packets. Channels of string type are marked with
+    SIZE_STRING (-1): strings serialize as a 2-byte length prefix plus the string bytes, so they
+    can be walked dynamically. Channels whose size cannot be determined (variable-size non-string
+    types, e.g. structs containing strings) are marked with SIZE_UNKNOWN (0).
+
+    Args:
+        dictionary: The path to the F Prime dictionary file
+    Returns:
+        A map of channel id (as string, for YAML/YConfiguration compatibility) to value size
+    """
+    with open(str(dictionary)) as f:
+        dictionary_data = json.load(f)
+    type_definitions = {
+        type_definition["qualifiedName"]: type_definition
+        for type_definition in dictionary_data.get("typeDefinitions", [])
+    }
+
+    def type_size(type_dict: dict) -> int:
+        """ Serialized size in bytes of a dictionary type reference """
+        type_name = type_dict.get("name", "")
+        if type_name in PRIMITIVE_TYPE_SIZES:
+            return PRIMITIVE_TYPE_SIZES[type_name]
+        if type_name == "string":
+            return SIZE_STRING
+        return definition_size(type_definitions.get(type_name))
+
+    def definition_size(type_definition: dict) -> int:
+        """ Serialized size in bytes of a typeDefinitions entry """
+        if type_definition is None:
+            return SIZE_UNKNOWN
+        kind = type_definition.get("kind", "")
+        if kind == "alias":
+            return type_size(type_definition["underlyingType"])
+        if kind == "enum":
+            return type_size(type_definition["representationType"])
+        if kind == "array":
+            element_size = type_size(type_definition["elementType"])
+            return element_size * type_definition["size"] if element_size > 0 else SIZE_UNKNOWN
+        if kind == "struct":
+            total = 0
+            for member in type_definition.get("members", {}).values():
+                member_size = type_size(member["type"])
+                if member_size <= 0:
+                    return SIZE_UNKNOWN
+                # Member arrays are declared inline with a "size" element count
+                total += member_size * member.get("size", 1)
+            return total
+        return SIZE_UNKNOWN
+
+    sizes = {}
+    for channel in dictionary_data.get("telemetryChannels", []):
+        size = type_size(channel["type"])
+        if size == SIZE_UNKNOWN:
+            print(f"[WARNING] Cannot determine serialized size of telemetry channel "
+                  f"'{channel.get('name', channel['id'])}'; aggregated packets containing it "
+                  "before other entries will not be fully split", file=sys.stderr)
+        sizes[str(channel["id"])] = size
+    return sizes
+
+
 def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, realtime_only_channels: List[str]) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
 
@@ -243,6 +321,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         instance_config = yaml.safe_load(f)
     constants = get_dictionary_constants(dictionary, ["ComCfg.TmFrameFixedSize", "ComCfg.SpacecraftId"])
     realtime_only_ids = get_channel_ids(dictionary, realtime_only_channels)
+    channel_value_sizes = compute_channel_value_sizes(dictionary)
     for link in instance_config.get("dataLinks", []):
         print(link)
         if link.get("class", "") == "org.yamcs.tctm.ccsds.UdpTmFrameLink":
@@ -262,6 +341,15 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
             link["port"] = uplink_port
             link["maxFrameLength"] = constants[0]
             link["spacecraftId"] = constants[1]
+    print(f"[INFO] Injecting {len(channel_value_sizes)} channel value sizes into the telemetry packet splitter")
+    for service in instance_config.get("services", []):
+        if service.get("class", "") == "com.example.myproject.FprimeTlmPacketSplitService":
+            args = service.setdefault("args", {})
+            args["channelValueSizes"] = channel_value_sizes
+            if realtime_only_ids:
+                # Split packets must carry the same "do not archive" flag that
+                # FprimePacketPreprocessor applies to the original packets
+                args["doNotArchiveChannelIds"] = realtime_only_ids
     if realtime_only_ids:
         print(f"[INFO] Keeping {len(realtime_only_ids)} telemetry channels realtime-only (not archived)")
         # The realtime filler archives parameters straight off the realtime processor, which would
