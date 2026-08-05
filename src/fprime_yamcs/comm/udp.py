@@ -9,7 +9,7 @@ UDP outlet (e.g. UdpTcFrameLink or UdpTcDataLink).
 import logging
 import socket
 
-LOGGER = logging.getLogger("yamcs_udp")
+LOGGER = logging.getLogger(__name__)
 
 # Maximum size of a received UDP datagram
 MAXIMUM_DATAGRAM_SIZE = 65507
@@ -23,7 +23,7 @@ class YamcsUdp:
     YAMCS UDP outlet.
     """
 
-    def __init__(self, tm_host, tm_port, tc_host, tc_port, timeout=0.500):
+    def __init__(self, tm_host, tm_port, tc_host, tc_port, tc_sources=None, timeout=0.500):
         """Initialize with YAMCS TM destination and local TC bind address
 
         Args:
@@ -31,10 +31,13 @@ class YamcsUdp:
             tm_port: port of the YAMCS UDP telemetry intake
             tc_host: local address to bind for receiving YAMCS command datagrams
             tc_port: local port to bind for receiving YAMCS command datagrams
+            tc_sources: iterable of additional source addresses allowed to send
+                command datagrams; the TM host and loopback are always allowed
             timeout: receive timeout in seconds allowing periodic shutdown checks
         """
         self.tm_destination = (tm_host, tm_port)
         self.tc_bind = (tc_host, tc_port)
+        self.allowed_sources = {tm_host, "127.0.0.1"} | set(tc_sources or [])
         self.timeout = timeout
         self.tm_socket = None
         self.tc_socket = None
@@ -43,7 +46,6 @@ class YamcsUdp:
         """Open the send and receive sockets"""
         self.tm_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.tc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.tc_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.tc_socket.bind(self.tc_bind)
         self.tc_socket.settimeout(self.timeout)
         LOGGER.info(
@@ -83,16 +85,22 @@ class YamcsUdp:
     def receive(self):
         """Receive one command datagram from the YAMCS outlet
 
-        Blocks up to the configured timeout waiting for a datagram.
+        Blocks up to the configured timeout waiting for a datagram. Datagrams from
+        sources other than the allowed set are dropped.
 
         Returns:
-            datagram bytes, or b'' when no datagram arrived within the timeout
+            datagram bytes, or None when no datagram arrived within the timeout
         """
         try:
-            datagram, _ = self.tc_socket.recvfrom(MAXIMUM_DATAGRAM_SIZE)
+            datagram, source = self.tc_socket.recvfrom(MAXIMUM_DATAGRAM_SIZE)
+            if source[0] not in self.allowed_sources:
+                LOGGER.warning(
+                    "Dropping TC datagram from unexpected source %s", source[0]
+                )
+                return None
             return datagram
         except socket.timeout:
-            return b""
+            return None
         except OSError as error:
             LOGGER.warning("Failed to receive TC datagram: %s", error)
-            return b""
+            return None

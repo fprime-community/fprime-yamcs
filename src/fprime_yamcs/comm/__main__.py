@@ -31,7 +31,11 @@ try:
 except ImportError:
     pass
 
-LOGGER = logging.getLogger("fprime_yamcs_comm")
+LOGGER = logging.getLogger(__name__)
+
+# Adapters known to expose a byte stream, where read-chunk boundaries are arbitrary and
+# no-op framing cannot reliably preserve packet boundaries
+STREAM_ADAPTERS = {"uart", "ip"}
 
 
 class YamcsUdpParser(fprime_gds.executables.cli.ParserBase):
@@ -66,6 +70,14 @@ class YamcsUdpParser(fprime_gds.executables.cli.ParserBase):
                 "default": 50001,
                 "help": "Local port to bind for receiving YAMCS UDP command packets.",
             },
+            ("--tc-allowed-source",): {
+                "dest": "tc_sources",
+                "type": str,
+                "action": "append",
+                "default": None,
+                "help": "Additional source address allowed to send command packets "
+                "(repeatable). The TM host and loopback are always allowed.",
+            },
         }
 
     def handle_arguments(self, args, **kwargs):
@@ -95,23 +107,41 @@ def main():
         description="F Prime to YAMCS UDP communication bridge.",
     )
     if args.communication_selection == "none":
-        print(
-            "[ERROR] Comm adapter set to 'none'. Nothing to do but exit.",
-            file=sys.stderr,
-        )
+        LOGGER.error("Comm adapter set to 'none'. Nothing to do but exit.")
         return 1
+    if (
+        args.framing_selection == "no-op"
+        and args.communication_selection in STREAM_ADAPTERS
+    ):
+        LOGGER.warning(
+            "'no-op' framing over the stream-oriented '%s' adapter cannot preserve "
+            "packet boundaries: packets may be split or merged across UDP datagrams "
+            "depending on read timing. Use a boundary-recovering framing plugin "
+            "(e.g. --framing-selection fprime) unless the endpoint stream carries "
+            "self-delimiting data that YAMCS deframes.",
+            args.communication_selection,
+        )
 
     adapter = Plugins.system().get_selected_class("communication")()
     framer = Plugins.system().get_selected_class("framing")()
-    udp = YamcsUdp(args.tm_host, args.tm_port, args.tc_host, args.tc_port)
+    udp = YamcsUdp(
+        args.tm_host, args.tm_port, args.tc_host, args.tc_port, args.tc_sources
+    )
     LOGGER.info(
         "Bridging '%s' adapter and YAMCS UDP using '%s' framing",
         args.communication_selection,
         args.framing_selection,
     )
 
-    bridge = UdpBridge(adapter, framer, udp)
     shutdown_event = threading.Event()
+    failure_event = threading.Event()
+
+    def fail(*_):
+        """Failure handler for abnormal pump-thread exits"""
+        failure_event.set()
+        shutdown_event.set()
+
+    bridge = UdpBridge(adapter, framer, udp, failure_handler=fail)
 
     def shutdown(*_):
         """Shutdown handler for signals"""
@@ -119,12 +149,16 @@ def main():
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-    bridge.start()
+    try:
+        bridge.start()
+    except OSError as error:
+        LOGGER.error("Failed to open bridge resources: %s", error)
+        return 1
     try:
         shutdown_event.wait()
     finally:
         bridge.stop()
-    return 0
+    return 1 if failure_event.is_set() else 0
 
 
 if __name__ == "__main__":

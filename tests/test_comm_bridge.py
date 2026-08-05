@@ -53,6 +53,18 @@ class TestNoOpFramerDeframer:
         assert discarded == b""
 
 
+def wait_for_udp_bind(port, timeout=TIMEOUT):
+    """Wait until some process has bound the given local UDP port (per /proc/net/udp)"""
+    end = time.time() + timeout
+    port_hex = f":{port:04X}"
+    while time.time() < end:
+        with open("/proc/net/udp") as table:
+            if any(line.split()[1].endswith(port_hex) for line in table.readlines()[1:]):
+                return True
+        time.sleep(0.05)
+    return False
+
+
 def read_available(fd, minimum=1, timeout=TIMEOUT):
     """Read at least `minimum` bytes from a non-blocking fd within timeout"""
     end = time.time() + timeout
@@ -121,8 +133,9 @@ def bridge_setup(request, pty_pair, unused_udp_ports):
 
     bridge = start_bridge(link_a, tm_port, tc_port, request.param)
     peer_fd = os.open(link_b, os.O_RDWR | os.O_NONBLOCK)
-    # Allow the bridge to open its resources
-    time.sleep(2.0)
+    # Wait for the bridge to bind its TC port (last resource opened before the pumps start)
+    assert wait_for_udp_bind(tc_port), "Bridge failed to bind its TC port"
+    time.sleep(0.5)
     assert bridge.poll() is None, "Bridge process exited prematurely"
     yield request.param, peer_fd, tm_socket, tc_socket, tc_port
     bridge.send_signal(signal.SIGINT)
@@ -148,6 +161,16 @@ def unused_udp_ports():
 class TestBridgeFlow:
     """Integration tests flowing data through the bridge in both directions"""
 
+    @staticmethod
+    def assert_no_more_datagrams(tm_socket):
+        """Assert no further datagram arrives within a short window"""
+        tm_socket.settimeout(0.5)
+        try:
+            with pytest.raises(socket.timeout):
+                tm_socket.recvfrom(65507)
+        finally:
+            tm_socket.settimeout(TIMEOUT)
+
     def test_uart_to_udp(self, bridge_setup):
         """Endpoint -> bridge -> YAMCS UDP intake"""
         framing, peer_fd, tm_socket, _, _ = bridge_setup
@@ -158,6 +181,35 @@ class TestBridgeFlow:
         os.write(peer_fd, wire_data)
         datagram, _ = tm_socket.recvfrom(65507)
         assert datagram == payload
+        self.assert_no_more_datagrams(tm_socket)
+
+    def test_uart_to_udp_split_frame(self, bridge_setup):
+        """A frame split across adapter reads must be reassembled into one packet"""
+        framing, peer_fd, tm_socket, _, _ = bridge_setup
+        if framing != "fprime":
+            pytest.skip("reassembly across reads requires a boundary-recovering framer")
+        payload = b"telemetry-packet-payload"
+        wire_data = FpFramerDeframer().frame(payload)
+        split = len(wire_data) // 2
+        os.write(peer_fd, wire_data[:split])
+        time.sleep(0.7)
+        os.write(peer_fd, wire_data[split:])
+        datagram, _ = tm_socket.recvfrom(65507)
+        assert datagram == payload
+        self.assert_no_more_datagrams(tm_socket)
+
+    def test_uart_garbage_discarded(self, bridge_setup):
+        """Unframed garbage must not reach the YAMCS TM intake"""
+        framing, peer_fd, tm_socket, _, _ = bridge_setup
+        if framing != "fprime":
+            pytest.skip("garbage rejection applies to fprime framing only")
+        os.write(peer_fd, b"\x00\x01garbage-without-start-word")
+        time.sleep(0.7)
+        payload = b"good-packet"
+        os.write(peer_fd, FpFramerDeframer().frame(payload))
+        datagram, _ = tm_socket.recvfrom(65507)
+        assert datagram == payload
+        self.assert_no_more_datagrams(tm_socket)
 
     def test_udp_to_uart(self, bridge_setup):
         """YAMCS UDP outlet -> bridge -> endpoint"""
@@ -169,3 +221,20 @@ class TestBridgeFlow:
         )
         received = read_available(peer_fd, minimum=len(expected))
         assert received == expected
+        # No trailing or duplicated bytes may follow the expected frame
+        assert read_available(peer_fd, minimum=1, timeout=0.5) == b""
+
+
+class TestCliValidation:
+    """Tests for CLI argument validation failure paths"""
+
+    @pytest.mark.parametrize("flag,value", [("--tm-port", "0"), ("--tc-port", "70000")])
+    def test_invalid_port_rejected(self, flag, value):
+        result = subprocess.run(
+            [sys.executable, "-m", "fprime_yamcs.comm", flag, value],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT * 3,
+        )
+        assert result.returncode != 0
+        assert "Invalid UDP port" in result.stderr
