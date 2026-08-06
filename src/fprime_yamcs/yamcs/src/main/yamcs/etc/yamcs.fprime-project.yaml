@@ -18,14 +18,16 @@ services:
     args:
       realtimeFiller:
         enabled: true
-  # Instantiated explicitly to bound its parameter cache. When left to the
-  # implicit default, the cache retains every processed parameter value with
-  # no limit; high-rate multi-kilobyte array telemetry then exhausts the heap.
+  # Instantiated explicitly to bound its parameter cache; the implicit default
+  # caches every processed value without limit and can exhaust the heap.
+  # cacheAll false: only parameters actually retrieved get cached, so
+  # high-rate realtime-only telemetry just flows through uncached.
   - class: org.yamcs.parameter.ParameterRetrievalService
     args:
       parameterCache:
+        cacheAll: false
         maxNumEntries: 32
-        maxDuration: 60000
+        duration: 60
   - class: org.yamcs.plists.ParameterListService
   - class: org.yamcs.timeline.TimelineService
   - class: org.yamcs.ProcessRunner

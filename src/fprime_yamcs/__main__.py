@@ -68,7 +68,7 @@ class YamcsParser(ParserBase):
                 "nargs": "+",
                 "default": [],
                 "metavar": "CHANNEL",
-                "help": "Telemetry channel names (fnmatch globs allowed, e.g. 'Doom.doom.FrameOut*') kept "
+                "help": "Telemetry channel names (fnmatch globs allowed, e.g. 'Deployment.camera.FrameOut*') kept "
                         "realtime-only: their packets are not recorded and never enter the parameter archive.",
             },
             ("--udp-uplink-port", ): {
