@@ -10,15 +10,6 @@ realtime:
   config:
     subscribeAll: true
     persistParameters: true
-    # Bound the realtime parameter cache. With subscribeAll, every decoded
-    # parameter value lands in this cache; large high-rate parameters (e.g.
-    # multi-kilobyte array telemetry) exhaust the heap with the default
-    # (unbounded duration, 4096 entries per parameter) settings.
-    parameterCache:
-      enabled: true
-      cacheAll: true
-      maxNumEntries: 32
-      maxDuration: 60000
     # Check alarms and also enable the alarm server (that keeps track of unacknowledged alarms)
     alarm:
       parameterCheck: true
