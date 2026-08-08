@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from yamcs.client import YamcsClient
-from yamcs.tmtc.model import Packet
+from yamcs.client import Packet
 
 # FPrime imports
 from fprime_gds.common.loaders.event_json_loader import EventJsonLoader
@@ -185,11 +185,23 @@ class FPrimeEventProcessor:
                 'SEVERITY_FATAL': 'critical',
             }
             
-            severity_str = str(severity).upper()
+            # Normalize to the bare F Prime severity name (e.g. "WARNING_HI"),
+            # handling enum reprs like "EventSeverity.WARNING_HI"
+            severity_str = str(severity).upper().split(".")[-1]
             yamcs_severity = severity_mapping.get(severity_str, 'info')
             
             # Build event message
             message = f"[{event_name}] {display_text}"
+            
+            # Structured metadata preserving the full F Prime severity set (7
+            # levels vs YAMCS's 5) and the numeric event ID for downstream
+            # consumers (e.g. the F Prime Events web extension)
+            fprime_severity = severity_str.replace("SEVERITY_", "")
+            event_extra = {
+                "fprime_severity": fprime_severity,
+                "fprime_event_id": str(event_id),
+                "fprime_event_name": qualified_name,
+            }
             
             # Get event arguments as key-value pairs
             event_args = {}
@@ -221,7 +233,7 @@ class FPrimeEventProcessor:
                 event_type=qualified_name,
                 severity=yamcs_severity,
                 message=message,
-                extra=event_args if event_args else None,
+                extra={**event_args, **event_extra},
                 time=generation_time,
             )
             

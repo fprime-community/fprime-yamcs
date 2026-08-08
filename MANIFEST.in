@@ -1,2 +1,2 @@
-recursive-include fprime_yamcs/yamcs/src *
-recursive-include fprime_yamcs/yamcs pom.xml
+recursive-include src/fprime_yamcs/yamcs/src *
+include src/fprime_yamcs/yamcs/pom.xml

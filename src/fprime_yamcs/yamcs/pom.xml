@@ -3,7 +3,9 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.example</groupId>
-  <artifactId>myproject</artifactId>
+  <!-- artifactId doubles as the Yamcs plugin id; it must be a valid custom
+       element name (lowercase, containing a hyphen) for web extensions -->
+  <artifactId>fprime-yamcs</artifactId>
   <version>1.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
