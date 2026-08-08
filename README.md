@@ -26,6 +26,18 @@ mdb:
 
 This is to allow for automatic dictionary generation. Users declining this service must specify: `--no-convert-dictionary`.
 
+## Web Extensions
+
+Projects may extend the YAMCS web interface with their own JavaScript:
+
+```sh
+fprime-yamcs --yamcs-web-extension-dirs path/to/extension-dir ...
+```
+
+Every top-level `.js` file in each directory is loaded as a module script by
+the YAMCS web interface, and the directory's files are served alongside the
+webapp's static files. Paths must not contain commas or whitespace.
+
 ## Caveats
 
 Currently, the default configuration of YAMCS requires F Prime to connect a CCSDS TC/TM framer/deframer to the Drv.Udp component ensuring that UDP is the transport mechanism.

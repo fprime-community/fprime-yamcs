@@ -103,6 +103,9 @@ class YamcsParser(ParserBase):
         for extension_dir in args.yamcs_web_extension_dirs:
             if not extension_dir.is_dir():
                 raise Exception(f"[ERROR] YAMCS web extension {extension_dir} is not a directory.")
+            resolved = str(extension_dir.absolute())
+            if "," in resolved or any(character.isspace() for character in resolved):
+                raise Exception(f"[ERROR] YAMCS web extension path may not contain commas or whitespace: {resolved}")
         return args
 
 def yamcs_instances(config_directory: Path) -> List[str]:
