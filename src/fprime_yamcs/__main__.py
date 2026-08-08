@@ -71,6 +71,15 @@ class YamcsParser(ParserBase):
                 "help": "Telemetry channel names (fnmatch globs allowed, e.g. 'Deployment.camera.FrameOut*') kept "
                         "realtime-only: their packets are not recorded and never enter the parameter archive.",
             },
+            ("--yamcs-web-extension-dirs",): {
+                "action": "store",
+                "nargs": "+",
+                "default": [],
+                "type": Path,
+                "metavar": "DIR",
+                "help": "Directories containing yamcs-web extensions. Every .js file in a directory is "
+                        "loaded as a module script by the YAMCS web interface.",
+            },
             ("--udp-uplink-port", ): {
                 "action": "store",
                 "default": 50001,
@@ -91,6 +100,9 @@ class YamcsParser(ParserBase):
             raise Exception("[ERROR] Maven (mvn) is required. Please install and ensure it is in your PATH.")
         if args.yamcs_config_dir is not None and not args.yamcs_config_dir.is_dir():
             raise Exception(f"[ERROR] YAMCS config {args.yamcs_config_dir} is not a directory.")
+        for extension_dir in args.yamcs_web_extension_dirs:
+            if not extension_dir.is_dir():
+                raise Exception(f"[ERROR] YAMCS web extension {extension_dir} is not a directory.")
         return args
 
 def yamcs_instances(config_directory: Path) -> List[str]:
@@ -319,14 +331,19 @@ def launch_yamcs(parsed_args):
     print(f"[INFO] Using YAMCS_DATA_DIR: {parsed_args.yamcs_data_dir.absolute()}")
     print(f"[INFO] Using YAMCS_CONFIG_DIR: {parsed_args.yamcs_config_dir.absolute()}")
 
+    # High-rate telemetry (many packets/s) needs more heap than the JVM
+    # default of 1/4 of physical RAM allows on small machines.
+    jvm_args = ["-Xmx4g"]
+    if parsed_args.yamcs_web_extension_dirs:
+        extension_dirs = ",".join(str(d.absolute()) for d in parsed_args.yamcs_web_extension_dirs)
+        jvm_args.append(f"-Dfprime.yamcs.webExtensions={extension_dirs}")
+
     # Switch to the YAMCS directory and launch YAMCS using Maven
     return launch_process(
         ["mvn", "-f", str(Path(__file__).resolve().parent / "yamcs" / "pom.xml"), "yamcs:run",
          f"-Dyamcs.configurationDirectory={parsed_args.yamcs_config_dir.absolute()}",
          f"-Dyamcs.directory={parsed_args.yamcs_data_dir.absolute()}",
-         # High-rate telemetry (many packets/s) needs more heap than the JVM
-         # default of 1/4 of physical RAM allows on small machines.
-         "-Dyamcs.jvmArgs=-Xmx4g"
+         f"-Dyamcs.jvmArgs={' '.join(jvm_args)}"
         ],
                           env=environment)
 
