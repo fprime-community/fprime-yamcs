@@ -72,6 +72,6 @@ fprime_yamcs = [
     "yamcs/pom.xml",
     "yamcs/src/main/yamcs/etc/*",
     "yamcs/src/main/yamcs/mdb/*",
-    "yamcs/src/main/java/com/example/myproject/*",
+    "yamcs/src/main/java/gov/nasa/jpl/fprime/yamcs/**/*",
     "yamcs/src/main/resources/fprime-events-web/*",
 ]

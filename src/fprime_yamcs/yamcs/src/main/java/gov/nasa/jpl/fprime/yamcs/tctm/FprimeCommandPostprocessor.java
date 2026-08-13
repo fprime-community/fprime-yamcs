@@ -1,4 +1,4 @@
-package com.example.myproject;
+package gov.nasa.jpl.fprime.yamcs.tctm;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -9,24 +9,20 @@ import org.yamcs.commanding.PreparedCommand;
 import org.yamcs.tctm.CommandPostprocessor;
 import org.yamcs.utils.ByteArrayUtils;
 
+import gov.nasa.jpl.fprime.yamcs.packet.SpacePacket;
+
 /**
- * Component capable of modifying command binary before passing it to the link
- * for further dispatch.
- * <p>
- * A single instance of this class is created, scoped to the link udp-out.
- * <p>
- * This is specified in the configuration file yamcs.myproject.yaml:
- * 
+ * Command postprocessor for F´ telecommands: patches the CCSDS space packet
+ * length and sequence count in the command binary before it reaches the link.
+ *
+ * <p>Configured on a TC link, e.g.:
+ *
  * <pre>
- * ...
  * dataLinks:
  *   - name: udp-out
  *     class: org.yamcs.tctm.UdpTcDataLink
  *     stream: tc_realtime
- *     host: localhost
- *     port: 10025
- *     commandPostprocessorClassName: com.example.myproject.FprimeCommandPostprocessor
- * ...
+ *     commandPostprocessorClassName: gov.nasa.jpl.fprime.yamcs.tctm.FprimeCommandPostprocessor
  * </pre>
  */
 public class FprimeCommandPostprocessor implements CommandPostprocessor {
@@ -53,28 +49,44 @@ public class FprimeCommandPostprocessor implements CommandPostprocessor {
     }
 
     // Called by Yamcs *after* a command was submitted, but *before* the link
-    // handles it.
-    // This method must return the (possibly modified) packet binary.
+    // handles it. Must return the (possibly modified) packet binary.
     @Override
     public byte[] process(PreparedCommand pc) {
+        if (commandHistory == null) {
+            throw new IllegalStateException(
+                    "setCommandHistoryPublisher must be called before process");
+        }
         byte[] binary = pc.getBinary();
+        if (binary == null || binary.length < SpacePacket.PRIMARY_HEADER_LEN + 1) {
+            commandHistory.publishAck(pc.getCommandId(),
+                    CommandHistoryPublisher.AcknowledgeSent_KEY,
+                    System.currentTimeMillis(),
+                    CommandHistoryPublisher.AckStatus.NOK,
+                    "Command binary shorter than a CCSDS space packet");
+            return null; // drop the command
+        }
+        if (binary.length > SpacePacket.PRIMARY_HEADER_LEN + SpacePacket.MAX_PAYLOAD_LEN) {
+            commandHistory.publishAck(pc.getCommandId(),
+                    CommandHistoryPublisher.AcknowledgeSent_KEY,
+                    System.currentTimeMillis(),
+                    CommandHistoryPublisher.AckStatus.NOK,
+                    "Command binary exceeds the CCSDS maximum packet length");
+            return null; // drop the command
+        }
 
-        // Set CCSDS packet length
-        int SPACE_PACKET_HEADER_LEN = 6;
-        int SPACE_PACKET_LENGTH_TOKEN_OFFSET = 4;
-        // Minus one as per SPP protocol
-        ByteArrayUtils.encodeUnsignedShort(binary.length - SPACE_PACKET_HEADER_LEN - 1, binary,
-                SPACE_PACKET_LENGTH_TOKEN_OFFSET);
+        // Set the CCSDS packet data length field (minus one per the SPP protocol)
+        ByteArrayUtils.encodeUnsignedShort(
+                binary.length - SpacePacket.PRIMARY_HEADER_LEN - 1, binary,
+                SpacePacket.LENGTH_FIELD_OFFSET);
 
         // Set CCSDS sequence count
         int seqCount = fillSeqCount(binary);
 
-        // Publish the sequence count to Command History. This has no special
-        // meaning to Yamcs, but it shows how to store custom information specific
-        // to a command.
+        // Publish the sequence count to Command History so operators can
+        // correlate a command with the CCSDS frame it went out in.
         commandHistory.publish(pc.getCommandId(), "ccsds-seqcount", seqCount);
 
-        // Since we modified the binary, update the binary in Command History too.
+        // Since the binary was modified, update it in Command History too.
         commandHistory.publish(pc.getCommandId(), PreparedCommand.CNAME_BINARY, binary);
 
         return binary;

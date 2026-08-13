@@ -67,6 +67,30 @@ flowchart LR
 
 The bridge's integration tests (`tests/test_comm_bridge.py`) require `socat` to emulate a UART endpoint; without it only the unit tests run (the integration tests are skipped). CI environments running these tests should install `socat`.
 
+## YAMCS Java Plugin
+
+The Maven module under `src/fprime_yamcs/yamcs` provides the Java classes that YAMCS loads for F Prime support:
+
+- `gov.nasa.jpl.fprime.yamcs.tctm.FprimePacketPreprocessor` — TM link preprocessor: CCSDS sequence-continuity checking and F´ time-tag extraction.
+- `gov.nasa.jpl.fprime.yamcs.tctm.FprimeCommandPostprocessor` — TC link postprocessor: patches the CCSDS packet length and sequence count in outgoing command binaries.
+- `gov.nasa.jpl.fprime.yamcs.filetransfer.FprimeFilePacketService` — a YAMCS `FileTransferService` implementing `Fw::FilePacket` file uplink and downlink, plus remote file listing for the yamcs-web file browser (synthesizes `FileManager.ListDirectory` commands and reassembles directory contents from the F´ events republished by the `fprime-yamcs-events` process on `events_realtime`). Downlinked files are stored in a YAMCS bucket (and optionally mirrored to a local directory via `downlinkMirrorDir`, off by default).
+- `gov.nasa.jpl.fprime.yamcs.filetransfer.CfdpFileTransferService` — a YAMCS `FileTransferService` implementing class-1 (unacknowledged) CFDP file uplink and downlink, carrying CFDP PDUs in space packets on a dedicated APID. It shares the transport and service infrastructure with the `Fw::FilePacket` service; see the commented example in `yamcs.fprime-project.yaml`.
+
+The file transfer service routes uplink through the YAMCS data link named by the `uplinkLink` option. Any `TcDataLink` is accepted: a CCSDS TC frame virtual channel (e.g. `UDP_TC_OUT.vc1`, the default TM/TC pipeline) **or** a raw space-packet-only link such as `org.yamcs.tctm.UdpTcDataLink` — the service is not tied to the TC framing pipeline. See the `FprimeFilePacketService` and `CfdpFileTransferService` class Javadoc for the per-service option lists, and `src/fprime_yamcs/yamcs/src/main/yamcs/etc/yamcs.fprime-project.yaml` for a working configuration.
+
+Reusable protocol pieces (`gov.nasa.jpl.fprime.yamcs.packet` codecs, `UplinkTransport`, `AbstractFprimeFileTransferService`) are shared infrastructure backing both services and any future transfer protocols.
+
+Deployment notes:
+
+- Both services synthesize their transfer (and, for the Fw::FilePacket service, listing) spacecraft commands as the YAMCS system user (matching the built-in `CfdpService`), so any user granted file-transfer privileges implicitly bypasses per-command authorization for the configured commands — scope file-transfer privileges accordingly.
+- `maxFileSize` bounds the memory a single downlink reassembly may allocate (default 256 MiB); reduce it on constrained ground servers, since unsolicited downlinks on the configured APID allocate up to this bound.
+
+Run the Java unit tests (requires JDK 17) with:
+
+```
+mvn -f src/fprime_yamcs/yamcs/pom.xml test
+```
+
 ## Configuration 
 
 YAMCS is powerful and has many configuration properties. `fprime-yamcs` requires one instance of YAMCS defined in the configuration to have the following MDB:

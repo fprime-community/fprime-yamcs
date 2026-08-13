@@ -1,4 +1,4 @@
-package com.example.myproject;
+package gov.nasa.jpl.fprime.yamcs.web;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

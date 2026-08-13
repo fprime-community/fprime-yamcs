@@ -35,23 +35,43 @@ services:
       command: ["fprime-yamcs-events"]
       restart: "always"
       logLevel: INFO
-  # Reassembles Fw::FilePacket downlinks (APID 3) into the fprimeFilesIn bucket.
-  
   # Environment variables to set before starting YAMCS
   # FPRIME_UPLINK_CHUNK_SIZE - Bytes per uplink data packet
   # Set by: export FPRIME_UPLINK_CHUNK_SIZE=1024
   # FPRIME_DOWNLINK_DIR - Directory to mirror downloaded files
   # Set by: export FPRIME_DOWNLINK_DIR=/custom/downlink/path
 
-  - class: com.example.myproject.FprimeFilePacketService
+  # Reassembles Fw::FilePacket downlinks (APID 3) into the fprimeFilesIn bucket.
+  - class: gov.nasa.jpl.fprime.yamcs.filetransfer.FprimeFilePacketService
     args:
       inStream: tm_realtime
       bucket: fprimeFilesIn
       fileApid: 3
       downloadTimeoutMs: 8000
       uplinkChunkSize: ${FPRIME_UPLINK_CHUNK_SIZE:512}
-      downlinkMirrorDir: ${FPRIME_DOWNLINK_DIR:/tmp/runner/fprime-downlink}
-      
+      # Optional local mirror of downlinked files; leave unset (off) unless
+      # pointed at a directory owned by the YAMCS user — world-writable
+      # locations like /tmp can be symlink-attacked before service start.
+      downlinkMirrorDir: ${FPRIME_DOWNLINK_DIR:}
+
+  # Class-1 (unacknowledged) CFDP file transfer. Enable when the flight
+  # software carries CFDP PDUs in space packets on a dedicated APID. The
+  # uplinkLink may be a TC frame virtual channel (as below) or a raw
+  # space-packet link such as org.yamcs.tctm.UdpTcDataLink. If a raw link is
+  # used, attach it to a dedicated tc stream (e.g. tc_cfdp declared under
+  # streamConfig) — a second link on tc_realtime would steal MDB commands
+  # from the primary TC link.
+  #- class: gov.nasa.jpl.fprime.yamcs.filetransfer.CfdpFileTransferService
+  #  args:
+  #    inStream: tm_realtime
+  #    bucket: cfdpFiles
+  #    cfdpApid: 16   # pick an APID unused by your deployment's ComCfg assignments
+  #    localEntityId: 1
+  #    remoteEntityId: 2
+  #    uplinkLink: UDP_TC_OUT.vc1
+  #    uplinkChunkSize: ${FPRIME_UPLINK_CHUNK_SIZE:512}
+  #    downlinkMirrorDir: ${FPRIME_DOWNLINK_DIR:}
+
 dataLinks:
   - name: UDP_TM_IN
     class: org.yamcs.tctm.ccsds.UdpTmFrameLink
@@ -65,7 +85,7 @@ dataLinks:
         ocfPresent: false
         service: "PACKET"
         maxPacketLength: 1024
-        packetPreprocessorClassName: com.example.myproject.FprimePacketPreprocessor
+        packetPreprocessorClassName: gov.nasa.jpl.fprime.yamcs.tctm.FprimePacketPreprocessor
         stream: "tm_realtime"
 
   - name: UDP_TC_OUT
@@ -80,7 +100,7 @@ dataLinks:
         ocfPresent: false
         service: "PACKET"
         priority: 1
-        commandPostprocessorClassName: com.example.myproject.FprimeCommandPostprocessor
+        commandPostprocessorClassName: gov.nasa.jpl.fprime.yamcs.tctm.FprimeCommandPostprocessor
         stream: "tc_realtime"
         useCop1: false
 

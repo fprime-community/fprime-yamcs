@@ -60,7 +60,7 @@ class FPrimeEventProcessor:
         
         Args:
             yamcs_url: URL of the YAMCS server (e.g., 'http://localhost:8090')
-            yamcs_instance: YAMCS instance name (e.g., 'myproject')
+            yamcs_instance: YAMCS instance name (e.g., 'fprime-project')
             dictionary_path: Path to the FPrime topology dictionary JSON file
         """
         self.yamcs_url = yamcs_url
