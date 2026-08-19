@@ -1,3 +1,6 @@
 __pycache__
 *.egg-info
 src/fprime_yamcs/yamcs/target
+src/fprime_yamcs/jars/
+dist/
+build/

@@ -1,0 +1,4 @@
+src/fprime_yamcs_bundle/lib/
+dist/
+build/
+*.egg-info/

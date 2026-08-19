@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fprime-yamcs-bundle"
+# First three numbers track the YAMCS version (yamcsVersion in ../../src/fprime_yamcs/yamcs/pom.xml);
+# the fourth is the repackaging number.
+version = "5.12.0.0"
+description = "YAMCS jars for fprime-yamcs: the YAMCS mission control framework and its dependencies"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Michael Starch", email = "LeStarch@googlemail.com"}
+]
+maintainers = [
+    {name = "Michael Starch", email = "LeStarch@googlemail.com"}
+]
+keywords = ["fprime", "yamcs", "jars"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/fprime-community/fprime-yamcs"
+Repository = "https://github.com/fprime-community/fprime-yamcs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fprime_yamcs_bundle = ["lib/*.jar"]

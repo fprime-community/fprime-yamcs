@@ -39,7 +39,11 @@ dependencies = [
     "yamcs-client>=1.12.1,<2",  # 2.x removed yamcs.tmtc used by the events processor
     "fprime-xtce>=0.1.2",
     "PyYAML>=6.0.2",
-    "fprime-gds>=4.2.1"
+    "fprime-gds>=4.2.1",
+    "fprime-yamcs-bundle>=5.12.0.0,<5.13",  # YAMCS jars (AGPL-3.0), tracks yamcsVersion in the pom
+    # jlink-trimmed Java runtime, used when no system Java >= 17 exists. Auto-installs only on
+    # the platforms with published runtime wheels; elsewhere a system Java 17+ is required.
+    "fprime-yamcs-runtime>=17,<22; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and (platform_machine == 'x86_64' or platform_machine == 'arm64')) or (sys_platform == 'win32' and platform_machine == 'AMD64')",
 ]
 
 [project.urls]
@@ -67,6 +71,7 @@ include = ["fprime_yamcs"]
 
 [tool.setuptools.package-data]
 fprime_yamcs = [
+    "jars/*.jar",
     "pox.xml",
     "src/main/yamcs/etc/*",
     "src/main/java/*",

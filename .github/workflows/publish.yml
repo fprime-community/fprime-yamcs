@@ -1,11 +1,38 @@
-name: Build and Publish Package
+name: Build and Publish Packages
+
+permissions:
+  contents: read
 
 on:
   release:
     types: [published]
 
 jobs:
-  Release-PyPI-Package:
+  build-jars:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build plugin jar and collect YAMCS jars
+        run: ./scripts/build-jars.sh
+      - name: Upload plugin jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-jar
+          path: src/fprime_yamcs/jars/
+      - name: Upload YAMCS jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: yamcs-lib
+          path: packages/bundle/src/fprime_yamcs_bundle/lib/
+
+  publish-fprime-yamcs:
+    needs: build-jars
     runs-on: ubuntu-latest
     permissions:
       # this permission is mandatory for trusted publishing
@@ -19,6 +46,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Download plugin jar
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-jar
+          path: src/fprime_yamcs/jars/
       - name: Upgrade Python Build Tools
         run: pip install -U build twine
       - name: Build distributions
@@ -26,10 +58,130 @@ jobs:
       - name: Check distributions
         run: twine check dist/*
       - name: Publish distributions to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
       - name: Clean-Up Attestations
         run: rm dist/*.attestation
       - name: Publish distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+
+  publish-fprime-yamcs-bundle:
+    needs: build-jars
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download YAMCS jars
+        uses: actions/download-artifact@v4
+        with:
+          name: yamcs-lib
+          path: packages/bundle/src/fprime_yamcs_bundle/lib/
+      - name: Upgrade Python Build Tools
+        run: pip install -U build twine
+      # Wheel only: an sdist would not contain the Maven-resolved jars
+      - name: Build wheel
+        run: python -m build --wheel packages/bundle
+      - name: Check distributions
+        run: twine check packages/bundle/dist/*
+      # skip-existing: the bundle version only changes when YAMCS is upgraded
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: packages/bundle/dist
+          skip-existing: true
+      - name: Clean-Up Attestations
+        run: rm -f packages/bundle/dist/*.attestation
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          packages-dir: packages/bundle/dist
+          skip-existing: true
+
+  publish-fprime-yamcs-runtime:
+    needs: build-jars
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform-tag: manylinux_2_17_x86_64.manylinux2014_x86_64
+          - os: ubuntu-24.04-arm
+            platform-tag: manylinux_2_17_aarch64.manylinux2014_aarch64
+          - os: macos-13
+            platform-tag: macosx_10_15_x86_64
+          - os: macos-14
+            platform-tag: macosx_11_0_arm64
+          - os: windows-latest
+            platform-tag: win_amd64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # The JDK version is single-sourced from the runtime package version
+      - name: Determine JDK version
+        id: jdk
+        shell: bash
+        run: |
+          VERSION=$(python -c "import tomllib; print('.'.join(tomllib.load(open('packages/runtime/pyproject.toml', 'rb'))['project']['version'].split('.')[:3]))")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.version }}
+      - name: Download YAMCS jars
+        uses: actions/download-artifact@v4
+        with:
+          name: yamcs-lib
+          path: jdeps-jars/
+      - name: Download plugin jar
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-jar
+          path: jdeps-jars/
+      - name: Build Java runtime image
+        run: python packages/runtime/build_java_runtime.py --jars-dir jdeps-jars
+      - name: Verify runtime image
+        shell: bash
+        run: |
+          BIN=packages/runtime/src/fprime_yamcs_runtime/java-runtime/bin
+          "${BIN}/$([ -f "${BIN}/java.exe" ] && echo java.exe || echo java)" -version
+      - name: Upgrade Python Build Tools
+        run: pip install -U build twine wheel
+      # Wheel only: an sdist would not contain the jlink runtime image
+      - name: Build wheel
+        run: python -m build --wheel packages/runtime
+      - name: Apply platform tag
+        shell: bash
+        run: python -m wheel tags --platform-tag '${{ matrix.platform-tag }}' --remove packages/runtime/dist/*.whl
+      - name: Check distributions
+        shell: bash
+        run: twine check packages/runtime/dist/*
+      # skip-existing: the runtime version only changes when the JDK is upgraded
+      - name: Publish distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: packages/runtime/dist
+          skip-existing: true
+      - name: Clean-Up Attestations
+        shell: bash
+        run: rm -f packages/runtime/dist/*.attestation
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          packages-dir: packages/runtime/dist
+          skip-existing: true

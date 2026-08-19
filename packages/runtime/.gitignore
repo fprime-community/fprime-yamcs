@@ -1,0 +1,4 @@
+src/fprime_yamcs_runtime/java-runtime/
+dist/
+build/
+*.egg-info/
