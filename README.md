@@ -27,6 +27,12 @@ The YAMCS web interface gains an **F´ Events** page (sidebar item, served at `/
 
 This works because the event processor publishes each event with structured `extra` fields (`fprime_severity`, `fprime_event_id`, `fprime_event_name`) preserving the full 7-level F Prime severity set, which YAMCS's native 5-level severity model cannot represent. The page is registered by the `FprimeEventsWebExtension` YAMCS plugin bundled with the YAMCS project that `fprime-yamcs` builds; no additional configuration is required. Events published by older versions of the event processor (without the `extra` fields) are shown with a best-effort severity derived from the YAMCS severity.
 
+### Data-Flow Orb
+
+Every YAMCS web page also gains the data-flow indicator F Prime developers know from the `fprime-gds` main screen: a floating orb (bottom-right corner) that glows green while telemetry or events are flowing and turns into a red X once neither has been seen for 5 seconds (the same timeout `fprime-gds` uses). Hovering the orb shows a per-source breakdown (telemetry vs. events); the orb is grey while no YAMCS instance is selected.
+
+Telemetry flow is detected from the selected processor's TM statistics stream (received-packet count deltas), and event flow from the instance's event stream, so the orb reflects live downlink activity regardless of which page is open.
+
 ## fprime-yamcs-tlmchan: Telemetry Channel Splitter
 
 `Svc.TlmChan` packs multiple (id, time, value) telemetry channel records into a single downlinked packet, but the generated XTCE models one channel per packet keyed on the first channel id — so YAMCS alone only decodes the first record of each packet.

@@ -28,7 +28,7 @@ public class FprimeEventsWebExtension implements Plugin {
     public static final String EXTENSION_ID = "fprime-events";
 
     private static final String RESOURCE_ROOT = "/fprime-events-web/";
-    private static final String[] RESOURCES = { EXTENSION_ID + ".js" };
+    private static final String[] RESOURCES = { EXTENSION_ID + ".js", "fprime-dataflow.js" };
 
     @Override
     public void onLoad(YConfiguration config) throws PluginException {
