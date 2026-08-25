@@ -12,7 +12,8 @@
  *
  * Two custom elements are defined:
  *  - <fprime-yamcs>: initializer element (named after the Yamcs plugin id),
- *    instantiated by yamcs-web at startup to register the sidebar item.
+ *    instantiated by yamcs-web at startup to register the sidebar item and
+ *    mount the data-flow orb (see fprime-dataflow.js).
  *  - <fprime-events>: the event display page, mounted at /ext/fprime-events.
  */
 
@@ -607,6 +608,15 @@ class FprimeYamcsInitializer extends HTMLElement {
       path: "ext/fprime-events",
       label: "F´ Events",
       icon: "event_note",
+    });
+    // Mount the GDS-style data-flow orb (defined in fprime-dataflow.js);
+    // whenDefined guards against script load-order differences
+    customElements.whenDefined("fprime-dataflow-orb").then(() => {
+      if (!document.querySelector("fprime-dataflow-orb")) {
+        const orb = document.createElement("fprime-dataflow-orb");
+        orb.extensionService = service;
+        document.body.appendChild(orb);
+      }
     });
   }
 }
