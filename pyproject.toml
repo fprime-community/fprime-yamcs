@@ -37,7 +37,7 @@ classifiers = [
 
 dependencies = [
     "yamcs-client>=1.12.1,<2",  # 2.x removed yamcs.tmtc used by the events processor
-    "fprime-xtce>=0.1.2",
+    "fprime-xtce>=0.1.5",  # string length prefix width read from FwSizeStoreType, incl. command maxSizeInBits
     "PyYAML>=6.0.2",
     "fprime-gds>=4.4.0a3",  # tm-frame-aggregator, tcp-fast-server, list-form --application-arguments
     "fprime-yamcs-bundle>=5.12.8.0,<5.13",  # YAMCS jars (AGPL-3.0), tracks yamcsVersion in the pom
