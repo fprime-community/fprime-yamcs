@@ -41,6 +41,7 @@ from fprime_gds.common.decoders.ch_decoder import ChDecoder
 from fprime_gds.common.models.dictionaries import Dictionaries
 from fprime_gds.common.models.serialize.time_type import TimeType
 from fprime_gds.common.utils.config_manager import ConfigManager
+from fprime_yamcs.id_remap import compute_high_id_remap
 from .logging import logger
 
 
@@ -112,6 +113,11 @@ class FPrimeTlmChanProcessor:
         self.channel_decoder = ChDecoder(self.channel_dict)
         logger.info(f"Loaded {len(self.channel_dict)} channel definitions")
 
+        # Compute the high-id remap and update the channel dictionary with remapped ids.
+        self.id_remap = compute_high_id_remap(self.dictionary_path)
+        for real_id, remapped_id in self.id_remap.items():
+            self.channel_dict[remapped_id] = self.channel_dict[real_id]
+
     def _split_records(self, record_data: bytes) -> List[bytes]:
         """
         Split aggregate channel record data into individual raw records
@@ -139,6 +145,21 @@ class FPrimeTlmChanProcessor:
             ptr += val_obj.getSize()
             records.append(record_data[start:ptr])
         return records
+
+    def _remap_record_id(self, record: bytes) -> bytes:
+        """ Rewrite a record's leading channel id if it has a remapped id (see
+        id_remap.py); other records are returned unchanged.
+
+        Args:
+            record: Raw (id, time, value) record bytes
+        Returns:
+            The record, with its id field rewritten if a remap applies
+        """
+        ch_id = struct.unpack(">I", record[0:4])[0]
+        remapped_id = self.id_remap.get(ch_id)
+        if remapped_id is None:
+            return record
+        return struct.pack(">I", remapped_id) + record[4:]
 
     def _inject_record(self, descriptor: bytes, record: bytes):
         """
@@ -186,7 +207,7 @@ class FPrimeTlmChanProcessor:
             # YAMCS already decoded the first record through the XTCE channel containers;
             # single-record packets (including re-injected ones) need no further splitting
             for record in records[1:]:
-                self._inject_record(descriptor, record)
+                self._inject_record(descriptor, self._remap_record_id(record))
 
         except Exception as e:
             logger.error(f"Error processing channel packet: {e}", exc_info=True)

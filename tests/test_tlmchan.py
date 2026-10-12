@@ -46,6 +46,7 @@ def processor():
     """A processor with the YAMCS client bypassed and a loopback inject socket"""
     proc = FPrimeTlmChanProcessor.__new__(FPrimeTlmChanProcessor)
     proc.channel_dict = CHANNEL_TEMPLATES
+    proc.id_remap = {}
     proc.sequence_count = 0
     proc.inject_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -108,6 +109,28 @@ class TestProcessChannelPacket:
             assert length == len(packet) - 6 - 1
             assert packet[6:8] == struct.pack(">H", 1)
             assert packet[8:] == record
+
+    def test_remapped_channel_id_rewritten_on_injection(self, processor):
+        proc, receiver = processor
+        proc.id_remap = {0x1002: 0xFFFFFFFF}
+        records = [
+            make_record(0x1001, struct.pack(">I", 1)),
+            make_record(0x1002, struct.pack(">B", 2)),
+        ]
+        proc._process_channel_packet(FakePacket(make_packet(b"".join(records))))
+        injected = self.receive_packets(receiver, 1)
+        remapped_record = struct.pack(">I", 0xFFFFFFFF) + records[1][4:]
+        assert injected[0][8:] == remapped_record
+
+    def test_self_received_remapped_packet_decodes_without_error(self, processor):
+        proc, receiver = processor
+        proc.channel_dict = dict(CHANNEL_TEMPLATES)
+        proc.id_remap = {0x1002: 0xFFFFFFFF}
+        proc.channel_dict[0xFFFFFFFF] = proc.channel_dict[0x1002]
+        record = make_record(0xFFFFFFFF, struct.pack(">B", 9))
+        proc._process_channel_packet(FakePacket(make_packet(record)))
+        with pytest.raises(socket.timeout):  # single-record packet, nothing re-injected
+            receiver.recv(2048)
 
     def test_single_record_packet_not_reinjected(self, processor):
         proc, receiver = processor

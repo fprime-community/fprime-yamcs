@@ -45,6 +45,7 @@ from fprime_gds.plugin.system import Plugins
 from fprime_gds.common.communication.bridge import DEFAULT_COMMUNICATION, DEFAULT_FRAMING
 from fprime_gds.executables.comm_bridge import GROUND_ADAPTER as BRIDGE_GROUND_ADAPTER
 
+from fprime_yamcs.xtce_remap import remap_high_channel_ids
 from fprime_yamcs.java import (
     JavaResolutionException,
     build_classpath,
@@ -216,6 +217,14 @@ class YamcsParser(ParserBase):
                 "dest": "browser_auto_open",
                 "action": "store_false",
                 "help": "Run YAMCS without auto-launching the default web browser",
+            },
+            ("--no-remap-high-channel-ids",): {
+                "dest": "remap_high_channel_ids",
+                "action": "store_false",
+                "default": True,
+                "help": "Do not remap telemetry channel ids of 0x80000000 or higher. By default, every such "
+                        "channel's XTCE container restriction is rewritten to an id YAMCS can actually match "
+                        "(YAMCS never matches a restriction at or above that value - see id_remap.py).",
             },
             ("--yamcs-config-dir",): {
                 "action": "store",
@@ -488,7 +497,7 @@ def anchor_relative_mdb_paths(instance_config: dict, base_directory: Path) -> bo
     return changed
 
 
-def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, tm_inject_port: int, realtime_only_channels: List[str], sdls_key_file: Optional[Path] = None, sdls_spi: int = 1) -> Tuple[Path, str]:
+def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, tm_inject_port: int, realtime_only_channels: List[str], sdls_key_file: Optional[Path] = None, sdls_spi: int = 1, remap_high_ids: bool = True) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
 
     The YAMCS configuration that ships with fprime-yamcs needs to be modified in several specific ways before running
@@ -509,6 +518,8 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         realtime_only_channels: Telemetry channel name patterns to keep realtime-only (not archived)
         sdls_key_file: 32-byte AES-256 key file enabling SDLS on the TM/TC frame links, or None to leave frames clear-text
         sdls_spi: SDLS security parameter index to use when sdls_key_file is set
+        remap_high_ids: Rewrite the XTCE container restriction for any telemetry channel whose id is
+            0x80000000 or higher to an id YAMCS can actually match (see id_remap.py)
     Returns:
         The path to the temporary YAMCS configuration directory and the fprime identified instance
     """
@@ -523,6 +534,10 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
 
     print(f"[INFO] Updating YAMCS XTCE dictionary from {dictionary} to {xtce_dictionary}")
     subprocess.run(["fprime-to-xtce", "-o", str(xtce_dictionary), str(dictionary)], check=True)
+
+    if remap_high_ids:
+        count = remap_high_channel_ids(xtce_dictionary, dictionary)
+        print(f"[INFO] Remapped {count} high-id telemetry channel restriction(s) for YAMCS realtime visibility")
 
     # YAMCS is launched without a controlled working directory, so relative MDB paths in
     # every instance configuration must be anchored to the temporary configuration directory
@@ -755,7 +770,7 @@ def main():
         if not instances:
             raise Exception(f"No YAMCS instances found in {parsed_args.yamcs_config_dir / 'etc/yamcs.yaml'}")
 
-        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port, parsed_args.udp_tm_inject_port, parsed_args.yamcs_realtime_only_channels, parsed_args.yamcs_sdls_key_file, parsed_args.yamcs_sdls_spi)
+        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port, parsed_args.udp_tm_inject_port, parsed_args.yamcs_realtime_only_channels, parsed_args.yamcs_sdls_key_file, parsed_args.yamcs_sdls_spi, parsed_args.remap_high_channel_ids)
         parsed_args.yamcs_config_dir = yamcs_config_dir
         if parsed_args.yamcs_events_instance is None:
             parsed_args.yamcs_events_instance = fprime_instance
