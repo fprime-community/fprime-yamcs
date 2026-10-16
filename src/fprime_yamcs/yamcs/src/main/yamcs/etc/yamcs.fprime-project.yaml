@@ -46,7 +46,7 @@ services:
   
   # Environment variables to set before starting YAMCS
   # FPRIME_UPLINK_CHUNK_SIZE - Bytes per uplink data packet
-  # Set by: export FPRIME_UPLINK_CHUNK_SIZE=1024
+  # Set by: export FPRIME_UPLINK_CHUNK_SIZE=512
   # FPRIME_DOWNLINK_DIR - Directory to mirror downloaded files
   # Set by: export FPRIME_DOWNLINK_DIR=/custom/downlink/path
 
@@ -56,8 +56,8 @@ services:
       bucket: fprimeFilesIn
       fileApid: 3
       downloadTimeoutMs: 8000
-      uplinkChunkSize: ${FPRIME_UPLINK_CHUNK_SIZE:512}
-      downlinkMirrorDir: ${FPRIME_DOWNLINK_DIR:/tmp/runner/fprime-downlink}
+      uplinkChunkSize: ${env.FPRIME_UPLINK_CHUNK_SIZE:512}
+      downlinkMirrorDir: ${env.FPRIME_DOWNLINK_DIR:/tmp/runner/fprime-downlink}
       
 dataLinks:
   - name: UDP_TM_IN
