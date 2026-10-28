@@ -36,7 +36,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "yamcs-client>=1.12.1,<2",  # 2.x removed yamcs.tmtc used by the events processor
+    "yamcs-client>=2.1.0,<3",  # 2.x embeds its own protobuf runtime (no PyPI protobuf dependency); 2.1.0 is the first with a current one
     "fprime-xtce>=0.1.5",  # string length prefix width read from FwSizeStoreType, incl. command maxSizeInBits
     "PyYAML>=6.0.2",
     "fprime-gds>=4.4.0",  # fprime-comm-bridge (fprime_gds.executables.comm_bridge)
