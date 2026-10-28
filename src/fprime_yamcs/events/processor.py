@@ -19,6 +19,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import string
 import struct
 import time
 from pathlib import Path
@@ -95,6 +96,18 @@ class FPrimeEventProcessor:
         # Create the event decoder
         self.event_decoder = EventDecoder(event_dict)
         logger.info(f"Loaded {len(event_dict)} event definitions")
+
+        # Map opcodes to command names, and record which event arguments hold an opcode.
+        # fprime-gds decodes an FwOpcodeType argument as a plain U32, so we find opcode arguments by their
+        # type name in the dictionary's JSON.
+        dictionary = event_loader.json_dict
+        self.command_names = {command["opcode"]: command["name"] for command in dictionary["commands"]}
+        self.opcode_args = {
+            (event["id"], index)
+            for event in dictionary["events"]
+            for index, param in enumerate(event["formalParams"])
+            if param["type"]["name"] == "FwOpcodeType"
+        }
         
     def _extract_event_data(self, packet_data: bytes) -> Optional[bytes]:
         """
@@ -153,6 +166,34 @@ class FPrimeEventProcessor:
         except Exception as e:
             logger.error(f"Error processing event packet: {e}", exc_info=True)
     
+    def _display_text(self, event_data) -> str:
+        """Event text with each known FwOpcodeType argument replaced by its command name"""
+        values = [arg.val for arg in event_data.args]
+        names = {
+            index: self.command_names[value]
+            for index, value in enumerate(values)
+            if (event_data.id, index) in self.opcode_args and value in self.command_names
+        }
+        if not names:
+            return event_data.get_display_text()
+
+        # fprime-gds's text already has the opcodes formatted, so we fill in the format string
+        # ourselves, putting each name where its opcode goes and dropping any "0x" before it
+        text = ""
+        index = 0
+        for literal, field, spec, _ in string.Formatter().parse(event_data.template.get_format_str()):
+            text += literal
+            if field is None:
+                continue
+            if index in names:
+                if literal.endswith("0x"):
+                    text = text[:-2]
+                text += names[index]
+            else:
+                text += format(values[index], spec)
+            index += 1
+        return text
+
     def _publish_event(self, event_data, generation_time):
         """
         Publish a decoded FPrime event to YAMCS
@@ -167,7 +208,7 @@ class FPrimeEventProcessor:
             qualified_name = event_data.template.get_full_name()
             event_id = event_data.id
             severity = event_data.get_severity()
-            display_text = event_data.get_display_text()
+            display_text = self._display_text(event_data)
             
             # Map FPrime severity to YAMCS severity
             # FPrime severities: COMMAND, ACTIVITY_LO, ACTIVITY_HI, WARNING_LO, 

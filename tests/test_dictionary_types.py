@@ -19,7 +19,10 @@ from fprime_yamcs.tlmchan.processor import FPrimeTlmChanProcessor
 
 
 EVENT_ID = 0x1000
+OPCODE_EVENT_ID = 0x1001
+COUNT_EVENT_ID = 0x1002
 CHANNEL_ID = 0x2000
+OPCODE = 0x500
 MESSAGE = "test string 0.123456789 abcdefghijk"
 
 
@@ -57,9 +60,15 @@ def write_dictionary(tmp_path, size_store_bits: int):
                 "type": integer_type("U32", 32),
                 "underlyingType": integer_type("U32", 32),
             },
+            {
+                "kind": "alias",
+                "qualifiedName": "FwOpcodeType",
+                "type": integer_type("U32", 32),
+                "underlyingType": integer_type("U32", 32),
+            },
         ],
         "constants": [],
-        "commands": [],
+        "commands": [{"name": "Comp.DO_THING", "commandKind": "sync", "opcode": OPCODE, "formalParams": []}],
         "parameters": [],
         "events": [
             {
@@ -68,7 +77,24 @@ def write_dictionary(tmp_path, size_store_bits: int):
                 "formalParams": [{"name": "message", "type": string_type, "ref": False}],
                 "id": EVENT_ID,
                 "format": "message={}",
-            }
+            },
+            {
+                "name": "Comp.OpCodeDispatched",
+                "severity": "COMMAND",
+                "formalParams": [
+                    {"name": "Opcode", "type": {"name": "FwOpcodeType", "kind": "qualifiedIdentifier"}, "ref": False},
+                    {"name": "port", "type": integer_type("U32", 32), "ref": False},
+                ],
+                "id": OPCODE_EVENT_ID,
+                "format": "Opcode 0x{x} dispatched to port {}.",
+            },
+            {
+                "name": "Comp.Counted",
+                "severity": "ACTIVITY_LO",
+                "formalParams": [{"name": "opcode", "type": integer_type("U32", 32), "ref": False}],
+                "id": COUNT_EVENT_ID,
+                "format": "Counted {}",
+            },
         ],
         "telemetryChannels": [
             {
@@ -127,6 +153,26 @@ def test_event_string_decoded_with_dictionary_size_type(tmp_path, size_store_bit
 
     assert len(events) == 1
     assert events[0].get_args()[0].val == MESSAGE
+
+
+@pytest.mark.parametrize(
+    "event_id, args, message",
+    [
+        (OPCODE_EVENT_ID, (OPCODE, 2), "Opcode Comp.DO_THING dispatched to port 2."),
+        (OPCODE_EVENT_ID, (0x999, 2), "Opcode 0x999 dispatched to port 2."),
+        (COUNT_EVENT_ID, (OPCODE,), f"Counted {OPCODE}"),
+    ],
+)
+def test_event_message_names_opcode_arguments(tmp_path, event_id, args, message):
+    processor = FPrimeEventProcessor.__new__(FPrimeEventProcessor)
+    processor.dictionary_path = write_dictionary(tmp_path, 16)
+    processor._init_fprime_decoder()
+
+    body = struct.pack(">I", event_id) + TimeType().serialize() + struct.pack(f">{len(args)}I", *args)
+    event_data = processor._extract_event_data(make_packet(FPrimeEventProcessor.APID_EVENT, body))
+    events = processor.event_decoder.decode_api(event_data)
+
+    assert processor._display_text(events[0]) == message
 
 
 @pytest.mark.parametrize("size_store_bits", [16, 32, 64])
