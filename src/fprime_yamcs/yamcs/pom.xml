@@ -18,7 +18,7 @@
     Update this to the latest Yamcs release.
     Check https://mvnrepository.com/artifact/org.yamcs/yamcs-core
     -->
-    <yamcsVersion>5.12.8</yamcsVersion>
+    <yamcsVersion>5.13.7</yamcsVersion>
     <!-- Set true to skip the tar.gz bundle without skipping plugin detection -->
     <yamcs.bundle.skip>false</yamcs.bundle.skip>
   </properties>

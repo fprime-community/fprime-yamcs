@@ -63,7 +63,7 @@ import org.yamcs.security.User;
 import org.yamcs.xtce.MetaCommand;
 import org.yamcs.xtce.SpaceSystem;
 import org.yamcs.tctm.Link;
-import org.yamcs.tctm.ccsds.TcPacketHandler;
+import org.yamcs.tctm.ccsds.UplinkPacketHandler;
 import org.yamcs.yarch.Stream;
 import org.yamcs.yarch.StreamSubscriber;
 import org.yamcs.yarch.Tuple;
@@ -96,7 +96,7 @@ import org.yamcs.yarch.YarchDatabaseInstance;
  * service reads the specified bucket object, generates an
  * {@code Fw::FilePacket} Start/Data×N/End sequence, wraps each in a CCSDS
  * space packet on the file APID, and hands each packet to the YAMCS-
- * configured TC data link's {@code TcPacketHandler.sendCommand()} API, which
+ * configured TC data link's {@code UplinkPacketHandler.sendCommand()} API, which
  * runs the command postprocessor, frames in CCSDS TC, and emits via the
  * link's configured transport. If the link isn't available, a direct-UDP
  * fallback path is used.
@@ -185,7 +185,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     // Runtime — uplink. Each uplinked FilePacket becomes a synthetic
     // PreparedCommand handed to this TC data link, which runs the
     // FprimeCommandPostprocessor and emits a CCSDS TC Type-BD frame.
-    private TcPacketHandler uplinkLink;
+    private UplinkPacketHandler<?> uplinkLink;
     // Synthetic CommandId sequence counter. Each uplinked packet gets
     // a unique sequenceNumber so command history distinguishes them.
     private int uplinkCmdSeq = 0;
@@ -294,7 +294,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
         spec.addOption("fileApid", OptionType.INTEGER).withDefault(DEFAULT_FILE_APID);
         spec.addOption("downlinkMirrorDir", OptionType.STRING).withDefault("/tmp/fprime-downlink");
         // Route uplink through the YAMCS-configured TC data link. The
-        // service expects this link name to resolve to a TcPacketHandler
+        // service expects this link name to resolve to a UplinkPacketHandler
         // and fails to start otherwise.
         spec.addOption("uplinkLink", OptionType.STRING).withDefault("UDP_TC_OUT.vc1");
         spec.addOption("uplinkChunkSize", OptionType.INTEGER).withDefault(128);
@@ -669,7 +669,7 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
 
             // --- Uplink transport resolution ---
             // Route via the YAMCS-configured TC data link. This must
-            // resolve to a TcPacketHandler — we fail startup otherwise
+            // resolve to a UplinkPacketHandler — we fail startup otherwise
             // because there is no meaningful fallback transport.
             if (uplinkLinkName == null || uplinkLinkName.isEmpty()) {
                 notifyFailed(new IllegalStateException(
@@ -678,15 +678,15 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
             }
             YamcsServerInstance instance = YamcsServer.getServer().getInstance(yamcsInstance);
             Link link = instance.getLinkManager().getLink(uplinkLinkName);
-            if (!(link instanceof TcPacketHandler)) {
+            if (!(link instanceof UplinkPacketHandler)) {
                 String what = link == null ? "not found"
-                        : "is " + link.getClass().getSimpleName() + ", not TcPacketHandler";
+                        : "is " + link.getClass().getSimpleName() + ", not UplinkPacketHandler";
                 notifyFailed(new IllegalStateException(
                         "Uplink link '" + uplinkLinkName + "' " + what));
                 return;
             }
-            this.uplinkLink = (TcPacketHandler) link;
-            LOG.info("Uplink will route through YAMCS link {} (TcPacketHandler)", uplinkLinkName);
+            this.uplinkLink = (UplinkPacketHandler<?>) link;
+            LOG.info("Uplink will route through YAMCS link {} (UplinkPacketHandler)", uplinkLinkName);
 
             // Uplink worker: single-threaded so transfers serialize and
             // the space packet sequence counter stays monotonic.

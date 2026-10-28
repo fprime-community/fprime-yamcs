@@ -28,7 +28,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-# YAMCS 5.12 requires Java 17 or later
+# YAMCS 5.13 requires Java 17 or later
 MINIMUM_JAVA_VERSION = 17
 # Entry point group whose entries resolve to YAMCS plugin jar paths
 PLUGIN_JAR_ENTRY_POINT_GROUP = "fprime_yamcs.plugin_jars"
