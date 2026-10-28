@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "fprime-yamcs-bundle"
 # First three numbers track the YAMCS version (yamcsVersion in ../../src/fprime_yamcs/yamcs/pom.xml);
 # the fourth is the repackaging number.
-version = "5.12.8.0"
+version = "5.13.7.0"
 description = "YAMCS jars for fprime-yamcs: the YAMCS mission control framework and its dependencies"
 readme = "README.md"
 requires-python = ">=3.8"

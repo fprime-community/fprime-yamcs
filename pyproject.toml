@@ -40,7 +40,7 @@ dependencies = [
     "fprime-xtce>=0.1.5",  # string length prefix width read from FwSizeStoreType, incl. command maxSizeInBits
     "PyYAML>=6.0.2",
     "fprime-gds>=4.4.0",  # fprime-comm-bridge (fprime_gds.executables.comm_bridge)
-    "fprime-yamcs-bundle>=5.12.8.0,<5.13",  # YAMCS jars (AGPL-3.0), tracks yamcsVersion in the pom
+    "fprime-yamcs-bundle>=5.13.7.0,<5.14",  # YAMCS jars (AGPL-3.0), tracks yamcsVersion in the pom
     # Java runtime (Eclipse Temurin 25), used when no system Java >= 17 exists. Auto-installs only
     # on the platforms with published fprime-jre wheels; elsewhere a system Java 17+ is required.
     "fprime-jre>=25,<26; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and (platform_machine == 'x86_64' or platform_machine == 'arm64')) or (sys_platform == 'win32' and platform_machine == 'AMD64')",
