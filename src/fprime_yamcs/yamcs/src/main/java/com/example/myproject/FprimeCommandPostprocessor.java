@@ -3,7 +3,6 @@ package com.example.myproject;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.yamcs.YConfiguration;
 import org.yamcs.cmdhistory.CommandHistoryPublisher;
 import org.yamcs.commanding.PreparedCommand;
 import org.yamcs.tctm.CommandPostprocessor;
@@ -35,16 +34,6 @@ public class FprimeCommandPostprocessor implements CommandPostprocessor {
     // ApidManager expectation (Yamcs' CcsdsSeqCountFiller starts at 1).
     private static final Map<Integer, Integer> seqCounts = new HashMap<>();
     private CommandHistoryPublisher commandHistory;
-
-    // Constructor used when this postprocessor is used without YAML configuration
-    public FprimeCommandPostprocessor(String yamcsInstance) {
-        this(yamcsInstance, YConfiguration.emptyConfig());
-    }
-
-    // Constructor used when this postprocessor is used with YAML configuration
-    // (commandPostprocessorClassArgs)
-    public FprimeCommandPostprocessor(String yamcsInstance, YConfiguration config) {
-    }
 
     // Called by Yamcs during initialization
     @Override
