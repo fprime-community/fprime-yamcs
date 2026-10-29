@@ -531,7 +531,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
             other_instance_config = yaml.safe_load(f)
         if anchor_relative_mdb_paths(other_instance_config, yamcs_working_config_dir):
             with other_instance_path.open("w") as f:
-                yaml.safe_dump(other_instance_config, f)
+                yaml.safe_dump(other_instance_config, f, sort_keys=False)
 
     print("[INFO] Setting ports for YAMCS UDP processors")
     instance_path = yamcs_working_config_dir / "etc" / f"yamcs.{fprime_instance}.yaml"
@@ -592,7 +592,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
                 args.setdefault("realtimeFiller", {})["enabled"] = False
                 args.setdefault("backFiller", {})["automaticBackfilling"] = True
     with instance_path.open("w") as f:
-        yaml.safe_dump(instance_config, f)
+        yaml.safe_dump(instance_config, f, sort_keys=False)
 
     return  yamcs_working_config_dir, fprime_instance
 

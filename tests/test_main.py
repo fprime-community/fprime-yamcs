@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from fprime_gds.executables.cli import ParserBase
 from fprime_gds.plugin.system import Plugins
@@ -36,6 +37,7 @@ from fprime_yamcs.__main__ import (
     check_comm_bridge_ports,
     check_communication_selection,
     comm_bridge_arguments,
+    construct_temporary_configuration,
     get_dictionary_constant,
     launch_comm_bridge,
     launch_deployment_app,
@@ -147,6 +149,74 @@ class TestAnchorRelativeMdbPaths:
 
     def test_no_mdb_section(self, tmp_path):
         assert anchor_relative_mdb_paths({}, tmp_path) is False
+
+
+class TestConstructTemporaryConfiguration:
+    """Configuration rewrites must preserve the order used to initialize streams"""
+
+    @pytest.mark.parametrize("rewrite_path", ["relative-mdb", "absolute-mdb", "other-instance"])
+    def test_preserves_stream_config_order(self, tmp_path, rewrite_path):
+        config_directory = tmp_path / "config"
+        (config_directory / "etc").mkdir(parents=True)
+        (config_directory / "mdb").mkdir()
+        source_mdb = config_directory / "mdb" / "fprime.xtce.xml"
+        source_mdb.write_text("<SpaceSystem name='test' />")
+        sql_file = tmp_path / "extra_streams.sql"
+        sql_file.write_text("create stream cfdp_in as select * from tm_realtime\n")
+        stream_config = {
+            "tm": [{"name": "tm_realtime"}],
+            "tc": [{"name": "tc_realtime"}],
+            "sqlFile": str(sql_file),
+        }
+        fprime_mdb = "mdb/fprime.xtce.xml" if rewrite_path == "relative-mdb" else str(source_mdb)
+        instance_config = {
+            "mdb": [{"type": "xtce", "args": {"file": fprime_mdb}}],
+            "dataLinks": [
+                {"class": "org.yamcs.tctm.ccsds.UdpTmFrameLink", "port": 50000},
+                {"class": "org.yamcs.tctm.ccsds.UdpTcFrameLink", "port": 50001},
+                {"class": "org.yamcs.tctm.UdpTmDataLink", "port": 50002},
+            ],
+            "streamConfig": stream_config,
+        }
+        instance_path = config_directory / "etc" / "yamcs.fprime-project.yaml"
+        instance_path.write_text(yaml.safe_dump(instance_config, sort_keys=False))
+        other_path = config_directory / "etc" / "yamcs.other.yaml"
+        other_path.write_text(yaml.safe_dump({
+            "mdb": [{"type": "xtce", "args": {"file": "mdb/other.xtce.xml"}}],
+            "streamConfig": stream_config,
+        }, sort_keys=False))
+        originals = {path: path.read_bytes() for path in (instance_path, other_path, source_mdb, sql_file)}
+        dictionary = tmp_path / "dictionary.json"
+        dictionary.write_text(json.dumps({"constants": [
+            {"qualifiedName": "ComCfg.TmFrameFixedSize", "value": 1024},
+            {"qualifiedName": "ComCfg.SpacecraftId", "value": 68},
+        ]}))
+
+        # Exercise the real copy/load/rewrite path; only the external converter is bypassed.
+        with patch.object(main_module.subprocess, "run") as convert:
+            working_directory, instance = construct_temporary_configuration(
+                config_directory, ["fprime-project"], dictionary,
+                uplink_port=60001, downlink_port=60000, tm_inject_port=60002,
+                realtime_only_channels=[],
+            )
+
+        assert instance == "fprime-project"
+        expected_mdb = working_directory / "mdb/fprime.xtce.xml" if rewrite_path == "relative-mdb" else source_mdb
+        convert.assert_called_once_with(["fprime-to-xtce", "-o", str(expected_mdb), str(dictionary)], check=True)
+        target = "other" if rewrite_path == "other-instance" else instance
+        rewritten = yaml.safe_load((working_directory / "etc" / f"yamcs.{target}.yaml").read_text())
+        # Mapping equality alone would miss the ordering regression.
+        assert list(rewritten["streamConfig"]) == list(stream_config)
+        assert rewritten["streamConfig"] == stream_config
+        target_mdb = working_directory / "mdb/other.xtce.xml" if target == "other" else expected_mdb
+        assert rewritten["mdb"][0]["args"]["file"] == str(target_mdb)
+
+        selected = yaml.safe_load((working_directory / "etc" / instance_path.name).read_text())
+        tm_link, tc_link, inject_link = selected["dataLinks"]
+        assert (tm_link["port"], tm_link["frameLength"], tm_link["spacecraftId"]) == (60000, 1024, 68)
+        assert (tc_link["port"], tc_link["maxFrameLength"], tc_link["spacecraftId"]) == (60001, 1024, 68)
+        assert inject_link["port"] == 60002
+        assert {path: path.read_bytes() for path in originals} == originals
 
 
 def parse_comm_args(*argv):
