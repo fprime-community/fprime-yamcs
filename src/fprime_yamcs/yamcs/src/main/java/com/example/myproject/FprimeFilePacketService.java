@@ -20,8 +20,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import com.google.protobuf.Timestamp;
 
@@ -238,24 +236,6 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     private String listDirectoryCommandName;
     private String listDirDirNameArg;
 
-    // F´ event format strings from lib/fprime/Svc/FileManager/Events.fppi,
-    // with the [EventName] prefix that fprime-yamcs-events prepends before
-    // publishing to YAMCS. These are the canonical formats — the regex
-    // parser is coupled to this format and must be updated if F´ changes
-    // the event templates. A proper long-term fix is to patch
-    // fprime-yamcs-events to populate Event.extra with the structured
-    // arg map it already builds but currently discards (processor.py:209).
-    private static final Pattern DIR_LISTING_RE = Pattern.compile(
-            "^\\[DirectoryListing\\] Directory (.+?): (.+?) \\((\\d+) bytes\\)$");
-    private static final Pattern DIR_LISTING_SUBDIR_RE = Pattern.compile(
-            "^\\[DirectoryListingSubdir\\] Directory (.+?): (.+?)$");
-    private static final Pattern LIST_DIR_SUCCEEDED_RE = Pattern.compile(
-            "^\\[ListDirectorySucceeded\\] Directory (.+?) contains (\\d+) files$");
-    private static final Pattern LIST_DIR_STARTED_RE = Pattern.compile(
-            "^\\[ListDirectoryStarted\\] Directory (.+?) listing started$");
-    // Don't strictly match the error format since we treat any error as
-    // terminal failure. We only need the event type match, not the args.
-
     // In-flight downlink transfer state. v0 supports one transfer at a time.
     // null means idle.
     private Transfer inflight;
@@ -458,12 +438,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
     /**
      * Subscribes to {@code events_realtime} and routes F´ FileManager
      * directory-listing events into the corresponding ListingAccumulator.
-     *
-     * <p>See the comment on {@link #DIR_LISTING_RE} for why we parse event
-     * messages with regex — the structured arg map is available inside
-     * fprime-yamcs-events but isn't propagated to the published YAMCS
-     * Event. A follow-up patch to fprime-yamcs-events would let this
-     * class read {@code Event.getExtra()} directly.
+     * Event arguments are read from the structured {@code Event.extra} map
+     * populated by fprime-yamcs-events.
      */
     private final class EventTupleSubscriber implements StreamSubscriber {
         @Override
@@ -480,36 +456,20 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                 type = type.substring(dot + 1);
             }
 
-            // Prefer the structured `extra` map if fprime-yamcs-events
-            // populated it (patched version >= fprime-community/fprime-yamcs#PR).
-            // Fall back to regex-parsing the message string for compatibility
-            // with older fprime-yamcs-events installs that discard the arg map.
             Map<String, String> extra = evt.getExtraMap();
-            boolean hasStructuredArgs = extra != null && !extra.isEmpty();
+            if (extra == null || extra.isEmpty()) {
+                return;
+            }
             String msg = evt.getMessage();
 
             try {
                 switch (type) {
                     case "DirectoryListing": {
-                        String dir, file;
-                        long size;
-                        if (hasStructuredArgs) {
-                            dir = extra.get("dirName");
-                            file = extra.get("fileName");
-                            String sizeStr = extra.get("fileSize");
-                            if (dir == null || file == null || sizeStr == null) break;
-                            size = Long.parseLong(sizeStr);
-                        } else {
-                            if (msg == null) break;
-                            Matcher m = DIR_LISTING_RE.matcher(msg);
-                            if (!m.matches()) {
-                                LOG.debug("DirectoryListing message did not match regex: {}", msg);
-                                break;
-                            }
-                            dir = m.group(1);
-                            file = m.group(2);
-                            size = Long.parseLong(m.group(3));
-                        }
+                        String dir = extra.get("dirName");
+                        String file = extra.get("fileName");
+                        String sizeStr = extra.get("fileSize");
+                        if (dir == null || file == null || sizeStr == null) break;
+                        long size = Long.parseLong(sizeStr);
                         ListingAccumulator acc = inProgressListings.get(dir);
                         if (acc != null) {
                             acc.addFile(file, size);
@@ -517,18 +477,9 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                         break;
                     }
                     case "DirectoryListingSubdir": {
-                        String dir, subdir;
-                        if (hasStructuredArgs) {
-                            dir = extra.get("dirName");
-                            subdir = extra.get("subdirName");
-                            if (dir == null || subdir == null) break;
-                        } else {
-                            if (msg == null) break;
-                            Matcher m = DIR_LISTING_SUBDIR_RE.matcher(msg);
-                            if (!m.matches()) break;
-                            dir = m.group(1);
-                            subdir = m.group(2);
-                        }
+                        String dir = extra.get("dirName");
+                        String subdir = extra.get("subdirName");
+                        if (dir == null || subdir == null) break;
                         ListingAccumulator acc = inProgressListings.get(dir);
                         if (acc != null) {
                             acc.addSubdir(subdir);
@@ -541,33 +492,12 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
                         break;
                     }
                     case "ListDirectorySucceeded": {
-                        String dir = null;
-                        if (hasStructuredArgs) {
-                            dir = extra.get("dirName");
-                        } else if (msg != null) {
-                            Matcher m = LIST_DIR_SUCCEEDED_RE.matcher(msg);
-                            if (m.matches()) dir = m.group(1);
-                        }
+                        String dir = extra.get("dirName");
                         if (dir != null) completeListing(dir, "completed");
                         break;
                     }
                     case "ListDirectoryError": {
-                        String dir = null;
-                        if (hasStructuredArgs) {
-                            dir = extra.get("dirName");
-                        } else if (msg != null) {
-                            // Fallback: grab the first token after "Directory ".
-                            int dirStart = msg.indexOf("Directory ");
-                            if (dirStart >= 0) {
-                                String rest = msg.substring(dirStart + "Directory ".length());
-                                int end = rest.length();
-                                for (int i = 0; i < rest.length(); i++) {
-                                    char c = rest.charAt(i);
-                                    if (c == ' ' || c == ',') { end = i; break; }
-                                }
-                                dir = rest.substring(0, end);
-                            }
-                        }
+                        String dir = extra.get("dirName");
                         if (dir != null) completeListing(dir, "failed");
                         break;
                     }
@@ -751,11 +681,8 @@ public class FprimeFilePacketService extends AbstractFileTransferService impleme
             }
 
             // --- Events stream subscription (for remote file listings) ---
-            // fprime-yamcs-events publishes decoded F´ events into the
-            // events_realtime stream. Each tuple has a 'body' column
-            // containing an org.yamcs.protobuf.Event protobuf. We filter
-            // by event type and regex-parse the message field to drive
-            // the listing state machine.
+            // fprime-yamcs-events publishes decoded F´ events (with structured
+            // args in Event.extra) into the events_realtime stream.
             this.eventsStream = yarch.getStream("events_realtime");
             if (eventsStream != null) {
                 eventsStream.addSubscriber(new EventTupleSubscriber());
