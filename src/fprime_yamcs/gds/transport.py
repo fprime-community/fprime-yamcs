@@ -447,7 +447,8 @@ class YamcsClient(TransportClient):
         if processor_name is not None:
             if processor_name not in [p.name for p in processors]:
                 raise RuntimeError(
-                    "YAMCS processor %s not found in instance %s at %s" % (processor_name, instance, redact_url(yamcs_url))
+                    "YAMCS processor %s not found in instance %s at %s"
+                    % (processor_name, instance, redact_url(yamcs_url))
                 )
             return instance, processor_name
         if not processors:
