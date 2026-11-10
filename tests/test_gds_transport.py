@@ -266,8 +266,80 @@ class TestPluginRegistration:
                 YamcsClient._discover_instance_and_processor("http://host:8090", "sim", "nope")
 
     def test_processor_requires_instance(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="requires --yamcs-instance"):
             YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_processor="replay")
+        YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_instance="sim", yamcs_processor="replay")
+        YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_instance="sim")
+
+    @pytest.mark.parametrize(
+        "url, uri, http_url",
+        [
+            ("http://host:8090", "yamcs://host:8090", "http://host:8090"),
+            ("https://host", "yamcs+https://host", "https://host"),
+            ("host:8090", "yamcs://host:8090", "http://host:8090"),
+        ],
+    )
+    def test_connection_uri_mapping(self, url, uri, http_url):
+        assert YamcsClient.get_connection_uri(yamcs_url=url, yamcs_instance="sim", yamcs_processor="p") == uri
+        assert YamcsClient._parse_uri(uri) == http_url
+
+    def test_rejects_non_http_url(self):
+        with pytest.raises(ValueError, match="http:// or https://"):
+            YamcsClient.check_arguments(yamcs_url="ftp://host:8090")
+        with pytest.raises(ValueError):
+            YamcsClient.get_connection_uri(yamcs_url="yamcs://host")
+
+    def test_default_discovery_connect_configures_and_subscribes(self):
+        client = YamcsClient(yamcs_url="http://host:8090")
+        client.yamcs = MagicMock()
+        with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("auto", "realtime")) as discover:
+            with patch.object(YamcsClient, "_build_parameter_list", return_value=["/a", "/b"]):
+                client.connect()
+        discover.assert_called_once_with("http://host:8090", None, None)
+        client.yamcs.configure.assert_called_once_with("http://host:8090", "auto", "realtime")
+        kwargs = client.yamcs.subscribe.call_args.kwargs
+        assert kwargs["parameter_names"] == ["/a", "/b"]
+        assert kwargs["on_parameter_callback"] == client._on_parameter_data
+        assert kwargs["on_event_callback"] == client._on_event_data
+
+    def test_arguments_flow_through_gds_command_line(self):
+        from fprime_gds.plugin.system import Plugins
+
+        if "data_transport" not in Plugins.get_all_categories():
+            pytest.skip("installed fprime-gds predates the data_transport plugin category")
+        from fprime_gds.executables.cli import MiddleWareParser, ParserBase
+
+        args, _ = ParserBase.parse_args(
+            [MiddleWareParser],
+            arguments=[
+                "--data-transport-selection", "yamcs",
+                "--yamcs-url", "https://yamcs.example:8443",
+                "--yamcs-instance", "sim",
+                "--yamcs-processor", "replay",
+            ],
+            client=True,
+        )
+        transport = args.connection_transport()
+        assert type(transport) is YamcsClient
+        assert transport.instance_override == "sim"
+        assert transport.processor_override == "replay"
+        assert args.connection_uri == "yamcs+https://yamcs.example:8443"
+        with pytest.raises(SystemExit):
+            ParserBase.parse_args(
+                [MiddleWareParser],
+                arguments=["--data-transport-selection", "yamcs", "--yamcs-processor", "replay"],
+                client=True,
+            )
+
+    def test_entry_point_is_harmless_on_fprime_gds_without_category(self):
+        from fprime_gds.plugin.system import Plugins
+
+        if "data_transport" in Plugins.get_all_categories():
+            pytest.skip("fprime-gds has the data_transport category; covered by the registration test")
+        plugins = Plugins()
+        assert "data_transport" not in plugins.get_categories()
+        for category in plugins.get_categories():
+            assert YamcsClient not in [plugin.plugin_class for plugin in plugins.get_plugins(category)]
 
 
 class TestRedactUrl:
