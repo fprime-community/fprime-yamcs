@@ -49,8 +49,7 @@ def split_credentials(url):
         return url, None
     from yamcs.client import Credentials
 
-    clean = urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
-    return clean, Credentials(username=unquote(parts.username or ""), password=unquote(parts.password or ""))
+    return redact_url(url), Credentials(username=unquote(parts.username or ""), password=unquote(parts.password or ""))
 
 
 def redact_url(url):
@@ -84,6 +83,8 @@ class YamcsWrapper:
         self.instance = instance
         yamcs_url, url_credentials = split_credentials(yamcs_url)
         credentials = credentials or url_credentials
+        if credentials is not None and yamcs_url.startswith("http://"):
+            LOGGER.warning("YAMCS credentials are sent in clear text over http://; consider https://")
         LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", yamcs_url, instance, processor_name)
         self.yamcs_client = YamcsLibClient(yamcs_url, credentials=credentials)
         self.processor = self.yamcs_client.get_processor(instance=instance, processor=processor_name)
@@ -114,6 +115,11 @@ class YamcsWrapper:
             except Exception as exc:
                 LOGGER.warning("Error canceling subscription: %s", exc)
         self.subscriptions.clear()
+        if self.yamcs_client is not None:
+            try:
+                self.yamcs_client.close()
+            except Exception as exc:
+                LOGGER.warning("Error closing YAMCS client: %s", exc)
         self.yamcs_client = None
         self.processor = None
         self.instance = None
@@ -440,31 +446,37 @@ class YamcsClient(TransportClient):
         server), otherwise the single running instance and its 'realtime' processor (else the first one)"""
         yamcs_url, url_credentials = split_credentials(yamcs_url)
         client = YamcsLibClient(yamcs_url, credentials=credentials or url_credentials)
-        running = [i for i in client.list_instances() if i.state == "RUNNING"]
-        if instance is not None:
-            if instance not in [i.name for i in running]:
-                raise RuntimeError("YAMCS instance %s is not running at %s" % (instance, redact_url(yamcs_url)))
-        elif len(running) == 0:
-            raise RuntimeError("No running YAMCS instances found at %s" % redact_url(yamcs_url))
-        elif len(running) > 1:
-            names = [i.name for i in running]
-            raise RuntimeError("Multiple running YAMCS instances found at %s: %s" % (redact_url(yamcs_url), names))
-        else:
-            instance = running[0].name
-        processors = list(client.list_processors(instance=instance))
-        if processor_name is not None:
-            if processor_name not in [p.name for p in processors]:
+        try:
+            running = [i for i in client.list_instances() if i.state == "RUNNING"]
+            if instance is not None:
+                if instance not in [i.name for i in running]:
+                    raise RuntimeError("YAMCS instance %s is not running at %s" % (instance, redact_url(yamcs_url)))
+            elif len(running) == 0:
+                raise RuntimeError("No running YAMCS instances found at %s" % redact_url(yamcs_url))
+            elif len(running) > 1:
+                names = [i.name for i in running]
+                raise RuntimeError("Multiple running YAMCS instances found at %s: %s" % (redact_url(yamcs_url), names))
+            else:
+                instance = running[0].name
+            processors = list(client.list_processors(instance=instance))
+            if processor_name is not None:
+                if processor_name not in [p.name for p in processors]:
+                    raise RuntimeError(
+                        "YAMCS processor %s not found in instance %s at %s"
+                        % (processor_name, instance, redact_url(yamcs_url))
+                    )
+                return instance, processor_name
+            if not processors:
                 raise RuntimeError(
-                    "YAMCS processor %s not found in instance %s at %s"
-                    % (processor_name, instance, redact_url(yamcs_url))
+                    "No processors found for YAMCS instance %s at %s" % (instance, redact_url(yamcs_url))
                 )
+            realtime = [p for p in processors if p.name == DEFAULT_PROCESSOR_NAME]
+            processor_name = realtime[0].name if realtime else processors[0].name
+            LOGGER.info("Auto-discovered YAMCS instance=%s, processor=%s", instance, processor_name)
             return instance, processor_name
-        if not processors:
-            raise RuntimeError("No processors found for YAMCS instance %s at %s" % (instance, redact_url(yamcs_url)))
-        realtime = [p for p in processors if p.name == DEFAULT_PROCESSOR_NAME]
-        processor_name = realtime[0].name if realtime else processors[0].name
-        LOGGER.info("Auto-discovered YAMCS instance=%s, processor=%s", instance, processor_name)
-        return instance, processor_name
+
+        finally:
+            client.close()
 
     def _build_parameter_list(self):
         if self.dictionaries is None or not getattr(self.dictionaries, "channel_name", None):

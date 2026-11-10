@@ -318,7 +318,7 @@ class TestPluginRegistration:
         assert kwargs["on_parameter_callback"] == client._on_parameter_data
         assert kwargs["on_event_callback"] == client._on_event_data
 
-    def test_arguments_flow_through_gds_command_line(self):
+    def test_arguments_flow_through_gds_command_line(self, capsys):
         from fprime_gds.plugin.system import Plugins
 
         if "data_transport" not in Plugins.get_all_categories():
@@ -348,12 +348,14 @@ class TestPluginRegistration:
             ("--yamcs-processor", "replay"),
         ]:
             assert reproduced[reproduced.index(flag) + 1] == value, (flag, reproduced)
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exit_info:
             ParserBase.parse_args(
                 [MiddleWareParser],
                 arguments=["--data-transport-selection", "yamcs", "--yamcs-url", "ftp://host:8090"],
                 client=True,
             )
+        assert exit_info.value.code not in (None, 0)
+        assert "--yamcs-url must be an http:// or https:// URL" in capsys.readouterr().err
 
     def test_entry_point_is_harmless_on_fprime_gds_without_category(self):
         from fprime_gds.plugin.system import Plugins
@@ -407,6 +409,29 @@ class TestRedactUrl:
         assert discover.call_args.args[3] is client.credentials
         assert client.yamcs.configure.call_args.args == ("https://host:8443", "a", "realtime", client.credentials)
 
+    def test_discovery_rejects_a_known_but_stopped_instance_and_closes_its_client(self):
+        lib_client = MagicMock()
+        lib_client.list_instances.return_value = [
+            SimpleNamespace(name="sim", state="OFFLINE"),
+            SimpleNamespace(name="other", state="RUNNING"),
+        ]
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
+            with pytest.raises(RuntimeError, match="instance sim is not running"):
+                YamcsClient._discover_instance_and_processor("http://host:8090", "sim")
+        lib_client.close.assert_called_once_with()
+
+    def test_disconnect_closes_the_client_and_http_credentials_warn(self, caplog):
+        lib_client = MagicMock()
+        lib_client.get_processor.return_value = MagicMock()
+        wrapper = YamcsWrapper()
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
+            with caplog.at_level(logging.WARNING, logger="transport"):
+                wrapper.configure("http://user:secret@host:8090", "a", "realtime")
+        assert "clear text over http://" in caplog.text and "secret" not in caplog.text
+        wrapper.disconnect()
+        lib_client.close.assert_called_once_with()
+        assert wrapper.yamcs_client is None
+
     def test_user_without_password_is_rejected(self):
         with pytest.raises(ValueError, match="user:password@"):
             YamcsClient.check_arguments(yamcs_url="http://user@host:8090")
@@ -421,6 +446,7 @@ class TestRedactUrl:
             assert YamcsClient._discover_instance_and_processor("http://user:secret@host:8090") == ("a", "realtime")
             with caplog.at_level(logging.INFO, logger="transport"):
                 wrapper.configure("http://user:secret@host:8090", "a", "realtime")
+        assert len(lib.call_args_list) == 2
         for call in lib.call_args_list:
             assert call.args == ("http://host:8090",)
             assert (call.kwargs["credentials"].username, call.kwargs["credentials"].password) == ("user", "secret")
@@ -458,6 +484,12 @@ class TestEntryPointMetadata:
     def test_wheel_metadata_declares_fprime_gds_entry_point(self):
         from importlib.metadata import entry_points
 
-        matches = [ep for ep in entry_points(group="fprime_gds") if ep.name == "yamcs"]
+        all_entry_points = entry_points()
+        group = (
+            all_entry_points.select(group="fprime_gds")
+            if hasattr(all_entry_points, "select")
+            else all_entry_points.get("fprime_gds", [])
+        )
+        matches = [ep for ep in group if ep.name == "yamcs"]
         assert [ep.value for ep in matches] == ["fprime_yamcs.gds.transport:YamcsClient"]
         assert matches[0].load() is YamcsClient
