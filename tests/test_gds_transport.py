@@ -5,6 +5,8 @@ Unit tests for the YAMCS-backed GDS transport (fprime_yamcs.gds.transport)
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import logging
+
 import pytest
 
 import yamcs.client  # noqa: F401  hard dependency: a broken yamcs-client must fail these tests, not skip them
@@ -15,6 +17,7 @@ from fprime_gds.common.models.serialize.string_type import StringType
 from fprime_gds.common.transport import TransportationException
 from fprime_yamcs.gds.transport import (
     redact_url,
+    split_credentials,
     TRANSFER_STATE_COMPLETED,
     TRANSFER_STATE_FAILED,
     YamcsClient,
@@ -240,11 +243,14 @@ class TestPluginRegistration:
 
         if "data_transport" not in Plugins.get_all_categories():
             pytest.skip("installed fprime-gds predates the data_transport plugin category")
-        plugins = {plugin.get_name(): plugin.plugin_class for plugin in Plugins(["data_transport"]).get_plugins("data_transport")}
-        assert plugins["yamcs"] is YamcsClient
-        assert plugins["yamcs"].__module__ == "fprime_yamcs.gds.transport"
+        yamcs_plugins = [
+            plugin.plugin_class
+            for plugin in Plugins(["data_transport"]).get_plugins("data_transport")
+            if plugin.get_name() == "yamcs"
+        ]
+        assert yamcs_plugins == [YamcsClient], "exactly one yamcs plugin, this package's class, must be registered"
 
-    def test_instance_and_processor_override_skip_discovery(self):
+    def test_instance_and_processor_overrides_are_validated_by_discovery(self):
         client = YamcsClient(yamcs_url="http://host:8090", yamcs_instance="sim", yamcs_processor="replay")
         client.yamcs = MagicMock()
         with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("sim", "replay")) as discover:
@@ -254,7 +260,10 @@ class TestPluginRegistration:
 
     def test_instance_override_discovers_processor(self):
         lib_client = MagicMock()
-        lib_client.list_instances.return_value = [SimpleNamespace(state="RUNNING", name="sim"), SimpleNamespace(state="RUNNING", name="other")]
+        lib_client.list_instances.return_value = [
+            SimpleNamespace(state="RUNNING", name="sim"),
+            SimpleNamespace(state="RUNNING", name="other"),
+        ]
         lib_client.list_processors.return_value = [SimpleNamespace(name="replay"), SimpleNamespace(name="realtime")]
         with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
             assert YamcsClient._discover_instance_and_processor("http://host:8090", "sim") == ("sim", "realtime")
@@ -292,7 +301,8 @@ class TestPluginRegistration:
     def test_default_discovery_connect_configures_and_subscribes(self):
         client = YamcsClient(yamcs_url="http://host:8090")
         client.yamcs = MagicMock()
-        with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("auto", "realtime")) as discover:
+        discovered = ("auto", "realtime")
+        with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=discovered) as discover:
             with patch.object(YamcsClient, "_build_parameter_list", return_value=["/a", "/b"]):
                 client.connect()
         discover.assert_called_once_with("http://host:8090", None, None)
@@ -324,6 +334,14 @@ class TestPluginRegistration:
         assert transport.instance_override == "sim"
         assert transport.processor_override == "replay"
         assert args.connection_uri == "yamcs+https://yamcs.example:8443"
+        reproduced = MiddleWareParser().reproduce_cli_args(args)
+        for flag, value in [
+            ("--data-transport-selection", "yamcs"),
+            ("--yamcs-url", "https://yamcs.example:8443"),
+            ("--yamcs-instance", "sim"),
+            ("--yamcs-processor", "replay"),
+        ]:
+            assert reproduced[reproduced.index(flag) + 1] == value, (flag, reproduced)
         with pytest.raises(SystemExit):
             ParserBase.parse_args(
                 [MiddleWareParser],
@@ -340,6 +358,8 @@ class TestPluginRegistration:
         assert "data_transport" not in plugins.get_categories()
         for category in plugins.get_categories():
             assert YamcsClient not in [plugin.plugin_class for plugin in plugins.get_plugins(category)]
+        builtin_names = {plugin.get_name() for plugin in plugins.get_plugins("communication")}
+        assert {"ip", "uart"} <= builtin_names, "the stock GDS plugins must survive the yamcs entry point"
 
 
 class TestRedactUrl:
@@ -347,6 +367,43 @@ class TestRedactUrl:
         assert redact_url("http://user:secret@host:8090/path") == "http://host:8090/path"
         assert redact_url("https://user@host") == "https://host"
         assert redact_url("http://host:8090") == "http://host:8090"
+        assert redact_url("http://u:p@[::1]:8090") == "http://[::1]:8090"
+        assert redact_url("http://u:p@host:port") == "http://host:port"
+
+    def test_check_arguments_error_does_not_leak_credentials(self):
+        with pytest.raises(ValueError) as info:
+            YamcsClient.check_arguments(yamcs_url="ftp://user:secret@host:8090")
+        assert "secret" not in str(info.value) and "ftp://host:8090" in str(info.value)
+
+    def test_split_credentials(self):
+        from yamcs.client import Credentials
+
+        assert split_credentials("http://host:8090") == ("http://host:8090", None)
+        url, credentials = split_credentials("https://user:secret@host:8443/base")
+        assert url == "https://host:8443/base"
+        assert isinstance(credentials, Credentials)
+        assert (credentials.username, credentials.password) == ("user", "secret")
+
+    def test_credentials_are_passed_to_yamcs_client_not_the_url(self, caplog):
+        lib_client = MagicMock()
+        lib_client.list_instances.return_value = [SimpleNamespace(name="a", state="RUNNING")]
+        lib_client.list_processors.return_value = [SimpleNamespace(name="realtime")]
+        wrapper = YamcsWrapper()
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client) as lib:
+            assert YamcsClient._discover_instance_and_processor("http://user:secret@host:8090") == ("a", "realtime")
+            with caplog.at_level(logging.INFO, logger="transport"):
+                wrapper.configure("http://user:secret@host:8090", "a", "realtime")
+        for call in lib.call_args_list:
+            assert call.args == ("http://host:8090",)
+            assert (call.kwargs["credentials"].username, call.kwargs["credentials"].password) == ("user", "secret")
+        assert "secret" not in caplog.text and "http://host:8090" in caplog.text
+
+    def test_module_import_does_not_import_yamcs_client(self):
+        import subprocess
+        import sys
+
+        code = "import sys, fprime_yamcs.gds.transport; assert 'yamcs.client' not in sys.modules, 'eager import'"
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     @pytest.mark.parametrize(
         "instances, processors, kwargs",

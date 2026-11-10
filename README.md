@@ -116,6 +116,7 @@ pytest test/int --dictionary <dict.json> --data-transport-selection yamcs --yamc
 | Argument | Default | Description |
 | --- | --- | --- |
 | `--yamcs-url` | `http://localhost:8090` | YAMCS server URL: `http://host[:port]`, `https://host[:port]`, or bare `host[:port]` (HTTP) |
+|  |  | `user:password@` in the URL is handed to `yamcs-client` as login credentials and never logged; prefer this over an open server only on trusted hosts, since GDS command lines are visible to local users |
 | `--yamcs-instance` | the single running instance | YAMCS instance to use; required when several instances run |
 | `--yamcs-processor` | `realtime`, else the first processor of the instance | YAMCS processor to use (requires `--yamcs-instance`) |
 

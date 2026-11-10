@@ -13,19 +13,6 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 
-from yamcs.client import YamcsClient as YamcsLibClient
-
-
-def redact_url(url):
-    """Drop user:password from an http(s) URL before it is logged or placed in an exception message"""
-    parts = urlsplit(url)
-    if parts.username is None:
-        return url
-    host = parts.hostname or ""
-    if parts.port:
-        host += ":%d" % parts.port
-    return urlunsplit(parts._replace(netloc=host))
-
 from fprime_gds.common.data_types.ch_data import ChData
 from fprime_gds.common.data_types.cmd_data import CmdData
 from fprime_gds.common.data_types.event_data import EventData
@@ -43,6 +30,37 @@ LOGGER = logging.getLogger("transport")
 
 YAMCS_URI_SCHEME = "yamcs://"
 YAMCS_SECURE_URI_SCHEME = "yamcs+https://"
+
+
+def YamcsLibClient(yamcs_url, **kwargs):
+    """Construct the yamcs-client ``YamcsClient``. Imported lazily: this module is loaded by the plugin system in
+    every GDS process, and ``yamcs.client`` (protobuf stack) must only be paid for when YAMCS is selected."""
+    from yamcs.client import YamcsClient as LibClient
+
+    return LibClient(yamcs_url, **kwargs)
+
+
+def split_credentials(url):
+    """Split ``user:password@`` out of an http(s) URL: returns (url without userinfo, yamcs-client Credentials or
+    None). The credentials are handed to yamcs-client explicitly so that they never ride in the URLs it logs,
+    raises, or opens websockets on."""
+    parts = urlsplit(url)
+    if parts.username is None and parts.password is None:
+        return url, None
+    from yamcs.client import Credentials
+
+    clean = urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
+    return clean, Credentials(username=parts.username, password=parts.password)
+
+
+def redact_url(url):
+    """Drop user:password from an http(s) URL before it is logged or placed in an exception message"""
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
+
+
 FILE_TRANSFER_POLL_INTERVAL = 2
 FILE_TRANSFER_SERVICE_NAME = "FprimeFilePacketService"
 FILE_TRANSFER_BUCKET = "fprimeFilesIn"
@@ -62,8 +80,9 @@ class YamcsWrapper:
 
     def configure(self, yamcs_url, instance, processor_name):
         self.instance = instance
-        LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", redact_url(yamcs_url), instance, processor_name)
-        self.yamcs_client = YamcsLibClient(yamcs_url)
+        yamcs_url, credentials = split_credentials(yamcs_url)
+        LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", yamcs_url, instance, processor_name)
+        self.yamcs_client = YamcsLibClient(yamcs_url, credentials=credentials)
         self.processor = self.yamcs_client.get_processor(instance=instance, processor=processor_name)
         self.namespace = self._discover_namespace()
 
@@ -195,7 +214,8 @@ class YamcsClient(TransportClient):
                 "dest": "yamcs_processor",
                 "action": "store",
                 "type": str,
-                "help": f"YAMCS processor to use (requires --yamcs-instance); {DEFAULT_PROCESSOR_NAME}, else the first processor, when not given [default: %(default)s]",
+                "help": f"YAMCS processor to use (requires --yamcs-instance); {DEFAULT_PROCESSOR_NAME}, else the first "
+                "processor, when not given [default: %(default)s]",
                 "default": None,
             },
         }
@@ -205,7 +225,9 @@ class YamcsClient(TransportClient):
         if yamcs_processor and not yamcs_instance:
             raise ValueError("--yamcs-processor requires --yamcs-instance")
         if "://" in yamcs_url and not yamcs_url.startswith(("http://", "https://")):
-            raise ValueError(f"--yamcs-url must be an http:// or https:// URL (or host[:port]), got: {yamcs_url}")
+            raise ValueError(
+                f"--yamcs-url must be an http:// or https:// URL (or host[:port]), got: {redact_url(yamcs_url)}"
+            )
 
     @classmethod
     def get_connection_uri(cls, client=True, yamcs_url=DEFAULT_URL, **_):
@@ -385,7 +407,8 @@ class YamcsClient(TransportClient):
                     if state == TRANSFER_STATE_FAILED:
                         LOGGER.error("Transfer %s failed", transfer.id)
                         raise TransportationException(
-                            f"File transfer {transfer.id} failed: {getattr(current, 'failure_reason', 'unknown reason')}"
+                            f"File transfer {transfer.id} failed: "
+                            f"{getattr(current, 'failure_reason', 'unknown reason')}"
                         )
                 time.sleep(FILE_TRANSFER_POLL_INTERVAL)
         finally:
@@ -407,7 +430,8 @@ class YamcsClient(TransportClient):
     def _discover_instance_and_processor(yamcs_url, instance=None, processor_name=None):
         """Resolve the YAMCS instance and processor: the explicit names when given (validated against the
         server), otherwise the single running instance and its 'realtime' processor (else the first one)"""
-        client = YamcsLibClient(yamcs_url)
+        yamcs_url, credentials = split_credentials(yamcs_url)
+        client = YamcsLibClient(yamcs_url, credentials=credentials)
         running = [i for i in client.list_instances() if i.state == "RUNNING"]
         if instance is not None:
             if instance not in [i.name for i in running]:
@@ -422,7 +446,9 @@ class YamcsClient(TransportClient):
         processors = list(client.list_processors(instance=instance))
         if processor_name is not None:
             if processor_name not in [p.name for p in processors]:
-                raise RuntimeError("YAMCS processor %s not found in instance %s at %s" % (processor_name, instance, redact_url(yamcs_url)))
+                raise RuntimeError(
+                    "YAMCS processor %s not found in instance %s at %s" % (processor_name, instance, redact_url(yamcs_url))
+                )
             return instance, processor_name
         if not processors:
             raise RuntimeError("No processors found for YAMCS instance %s at %s" % (instance, redact_url(yamcs_url)))
