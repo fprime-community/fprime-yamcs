@@ -101,6 +101,29 @@ flowchart LR
 
 See the `fprime-gds` README for the full option set (other framings, `--udp-fast-allowed-source`, operational notes) and the bridge's tests.
 
+## GDS Data Transport Plugin: `--data-transport-selection yamcs`
+
+`fprime-yamcs` registers a `yamcs` **data transport plugin** (fprime-gds `data_transport` category, plugin class
+`fprime_yamcs.gds.transport.YamcsClient`). Selecting it points the F Prime GDS pipeline (GDS GUI, `fprime-cli`, the
+Integration Test API and `fprime_test_api_session` pytest fixture) at a running YAMCS server instead of the GDS comm
+layer: commands are issued through the YAMCS processor and telemetry/events arrive from YAMCS parameter and event
+subscriptions, so YAMCS becomes the ground system under test.
+
+```bash
+pytest test/int --dictionary <dict.json> --data-transport-selection yamcs --yamcs-url http://localhost:8090
+```
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--yamcs-url` | `http://localhost:8090` | YAMCS server URL (`http://` or `https://`) |
+| `--yamcs-instance` | the single running instance | YAMCS instance to use; required when several instances run |
+| `--yamcs-processor` | `realtime`, else the first processor | YAMCS processor to use (requires `--yamcs-instance`) |
+
+> [!NOTE]
+> Requires `fprime-gds >= 4.5` (the `data_transport` plugin category). Older `fprime-gds` releases ship an equivalent
+> transport as `fprime_gds.common.yamcs_transport` enabled by the pytest `--use-yamcs` option; the plugin from this
+> package takes precedence over that built-in when both are installed.
+
 ## Configuration 
 
 YAMCS is powerful and has many configuration properties. `fprime-yamcs` requires one instance of YAMCS defined in the configuration to have the following MDB:

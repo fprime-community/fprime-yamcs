@@ -58,6 +58,9 @@ fprime-yamcs-tlmchan = "fprime_yamcs.tlmchan.__main__:main"
 fprime-yamcs = "fprime_yamcs.__main__:main"
 
 
+[project.entry-points.fprime_gds]
+yamcs = "fprime_yamcs.gds.transport:YamcsClient"
+
 [tool.setuptools]
 include-package-data = true
 
