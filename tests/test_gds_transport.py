@@ -280,7 +280,8 @@ class TestPluginRegistration:
         lib_client.list_instances.return_value = [SimpleNamespace(name="only", state="RUNNING")]
         lib_client.list_processors.return_value = [SimpleNamespace(name="realtime"), SimpleNamespace(name="replay")]
         with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
-            assert YamcsClient._discover_instance_and_processor("http://host:8090", None, "replay") == ("only", "replay")
+            discovered = YamcsClient._discover_instance_and_processor("http://host:8090", None, "replay")
+            assert discovered == ("only", "replay")
             with pytest.raises(RuntimeError, match="processor zzz not found in instance only"):
                 YamcsClient._discover_instance_and_processor("http://host:8090", None, "zzz")
         lib_client.list_processors.assert_called_with(instance="only")
