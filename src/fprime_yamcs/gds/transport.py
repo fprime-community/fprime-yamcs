@@ -188,14 +188,14 @@ class YamcsClient(TransportClient):
                 "dest": "yamcs_instance",
                 "action": "store",
                 "type": str,
-                "help": "YAMCS instance to use [default: the single running instance]",
+                "help": "YAMCS instance to use; the single running instance when not given [default: %(default)s]",
                 "default": None,
             },
             ("--yamcs-processor",): {
                 "dest": "yamcs_processor",
                 "action": "store",
                 "type": str,
-                "help": f"YAMCS processor to use [default: {DEFAULT_PROCESSOR_NAME}, else the first processor]",
+                "help": f"YAMCS processor to use (requires --yamcs-instance); {DEFAULT_PROCESSOR_NAME}, else the first processor, when not given [default: %(default)s]",
                 "default": None,
             },
         }
