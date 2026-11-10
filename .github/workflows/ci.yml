@@ -55,12 +55,13 @@ jobs:
           name: wheels
           path: dist/
       - name: Install
-        run: pip install dist/*.whl pytest
+        run: pip install dist/*.whl pytest pytest-mock
       - name: Run unit tests
         run: pytest tests/
 
   # The yamcs GDS data-transport plugin registers through the fprime_gds entry point; exercise it against
-  # the fprime-gds development branch, which carries the data_transport plugin category (nasa/fprime#5546).
+  # the fprime-gds development branch, which gains the data_transport plugin category with nasa/fprime-gds#386
+  # (nasa/fprime#5546); until then the plugin discovery test skips itself.
   unit-tests-gds-devel:
     needs: build
     runs-on: ubuntu-latest
@@ -78,7 +79,7 @@ jobs:
           path: dist/
       - name: Install
         run: |
-          pip install dist/*.whl pytest
+          pip install dist/*.whl pytest pytest-mock
           pip install --upgrade "fprime-gds @ git+https://github.com/nasa/fprime-gds.git@devel"
       - name: Run unit tests
         run: pytest tests/

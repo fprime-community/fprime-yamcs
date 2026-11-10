@@ -117,10 +117,10 @@ pytest test/int --dictionary <dict.json> --data-transport-selection yamcs --yamc
 | --- | --- | --- |
 | `--yamcs-url` | `http://localhost:8090` | YAMCS server URL (`http://` or `https://`) |
 | `--yamcs-instance` | the single running instance | YAMCS instance to use; required when several instances run |
-| `--yamcs-processor` | `realtime`, else the first processor | YAMCS processor to use (requires `--yamcs-instance`) |
+| `--yamcs-processor` | `realtime`, else the first processor of the instance | YAMCS processor to use (requires `--yamcs-instance`) |
 
 > [!NOTE]
-> Requires `fprime-gds >= 4.5` (the `data_transport` plugin category). Older `fprime-gds` releases ship an equivalent
+> Requires an `fprime-gds` with the `data_transport` plugin category ([nasa/fprime-gds#386](https://github.com/nasa/fprime-gds/pull/386)). Earlier `fprime-gds` releases ship an equivalent
 > transport as `fprime_gds.common.yamcs_transport` enabled by the pytest `--use-yamcs` option; the plugin from this
 > package takes precedence over that built-in when both are installed.
 

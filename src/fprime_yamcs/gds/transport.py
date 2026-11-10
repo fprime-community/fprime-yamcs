@@ -10,9 +10,21 @@ connects the GDS pipeline (GUI, fprime-cli, Integration Test API) to a YAMCS ser
 import datetime
 import logging
 import time
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 
 from yamcs.client import YamcsClient as YamcsLibClient
+
+
+def redact_url(url):
+    """Drop user:password from an http(s) URL before it is logged or placed in an exception message"""
+    parts = urlsplit(url)
+    if parts.username is None:
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host += ":%d" % parts.port
+    return urlunsplit(parts._replace(netloc=host))
 
 from fprime_gds.common.data_types.ch_data import ChData
 from fprime_gds.common.data_types.cmd_data import CmdData
@@ -50,7 +62,7 @@ class YamcsWrapper:
 
     def configure(self, yamcs_url, instance, processor_name):
         self.instance = instance
-        LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", yamcs_url, instance, processor_name)
+        LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", redact_url(yamcs_url), instance, processor_name)
         self.yamcs_client = YamcsLibClient(yamcs_url)
         self.processor = self.yamcs_client.get_processor(instance=instance, processor=processor_name)
         self.namespace = self._discover_namespace()
@@ -206,10 +218,9 @@ class YamcsClient(TransportClient):
     def connect(self, connection_uri=None, incoming_routing=None, outgoing_routing=None):
         connection_uri = self.default_uri if connection_uri is None else connection_uri
         yamcs_url = self._parse_uri(connection_uri)
-        if self.instance_override:
-            instance, processor_name = self.instance_override, self.processor_override or DEFAULT_PROCESSOR_NAME
-        else:
-            instance, processor_name = self._discover_instance_and_processor(yamcs_url)
+        instance, processor_name = self._discover_instance_and_processor(
+            yamcs_url, self.instance_override, self.processor_override
+        )
         self.yamcs.configure(yamcs_url, instance, processor_name)
         self.yamcs.subscribe(
             parameter_names=self._build_parameter_list(),
@@ -393,16 +404,26 @@ class YamcsClient(TransportClient):
         return scheme + transport_url.split("/")[0]
 
     @staticmethod
-    def _discover_instance_and_processor(yamcs_url):
+    def _discover_instance_and_processor(yamcs_url, instance=None, processor_name=None):
+        """Resolve the YAMCS instance and processor: the explicit names when given (validated against the
+        server), otherwise the single running instance and its 'realtime' processor (else the first one)"""
         client = YamcsLibClient(yamcs_url)
         running = [i for i in client.list_instances() if i.state == "RUNNING"]
-        if len(running) == 0:
-            raise RuntimeError("No running YAMCS instances found at %s" % yamcs_url)
-        if len(running) > 1:
+        if instance is not None:
+            if instance not in [i.name for i in running]:
+                raise RuntimeError("YAMCS instance %s is not running at %s" % (instance, redact_url(yamcs_url)))
+        elif len(running) == 0:
+            raise RuntimeError("No running YAMCS instances found at %s" % redact_url(yamcs_url))
+        elif len(running) > 1:
             names = [i.name for i in running]
-            raise RuntimeError("Multiple running YAMCS instances found at %s: %s" % (yamcs_url, names))
-        instance = running[0].name
+            raise RuntimeError("Multiple running YAMCS instances found at %s: %s" % (redact_url(yamcs_url), names))
+        else:
+            instance = running[0].name
         processors = list(client.list_processors(instance=instance))
+        if processor_name is not None:
+            if processor_name not in [p.name for p in processors]:
+                raise RuntimeError("YAMCS processor %s not found in instance %s at %s" % (processor_name, instance, redact_url(yamcs_url)))
+            return instance, processor_name
         if not processors:
             raise RuntimeError("No processors found for YAMCS instance %s at %s" % (instance, yamcs_url))
         realtime = [p for p in processors if p.name == DEFAULT_PROCESSOR_NAME]

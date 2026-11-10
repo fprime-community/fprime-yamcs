@@ -2,17 +2,19 @@
 Unit tests for the YAMCS-backed GDS transport (fprime_yamcs.gds.transport)
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("yamcs.client")
+import yamcs.client  # noqa: F401  hard dependency: a broken yamcs-client must fail these tests, not skip them
 
 from fprime_gds.common.models.serialize.bool_type import BoolType
 from fprime_gds.common.models.serialize.numerical_types import F64Type, I32Type
 from fprime_gds.common.models.serialize.string_type import StringType
 from fprime_gds.common.transport import TransportationException
 from fprime_yamcs.gds.transport import (
+    redact_url,
     TRANSFER_STATE_COMPLETED,
     TRANSFER_STATE_FAILED,
     YamcsClient,
@@ -245,17 +247,48 @@ class TestPluginRegistration:
     def test_instance_and_processor_override_skip_discovery(self):
         client = YamcsClient(yamcs_url="http://host:8090", yamcs_instance="sim", yamcs_processor="replay")
         client.yamcs = MagicMock()
-        with patch.object(YamcsClient, "_discover_instance_and_processor") as discover:
+        with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("sim", "replay")) as discover:
             client.connect()
-        discover.assert_not_called()
+        discover.assert_called_once_with("http://host:8090", "sim", "replay")
         client.yamcs.configure.assert_called_once_with("http://host:8090", "sim", "replay")
 
-    def test_instance_override_defaults_processor(self):
-        client = YamcsClient(yamcs_url="http://host:8090", yamcs_instance="sim")
-        client.yamcs = MagicMock()
-        client.connect()
-        client.yamcs.configure.assert_called_once_with("http://host:8090", "sim", "realtime")
+    def test_instance_override_discovers_processor(self):
+        lib_client = MagicMock()
+        lib_client.list_instances.return_value = [SimpleNamespace(state="RUNNING", name="sim"), SimpleNamespace(state="RUNNING", name="other")]
+        lib_client.list_processors.return_value = [SimpleNamespace(name="replay"), SimpleNamespace(name="realtime")]
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
+            assert YamcsClient._discover_instance_and_processor("http://host:8090", "sim") == ("sim", "realtime")
+            lib_client.list_processors.return_value = [SimpleNamespace(name="replay")]
+            assert YamcsClient._discover_instance_and_processor("http://host:8090", "sim") == ("sim", "replay")
+            with pytest.raises(RuntimeError, match="not running"):
+                YamcsClient._discover_instance_and_processor("http://host:8090", "missing")
+            with pytest.raises(RuntimeError, match="processor nope not found"):
+                YamcsClient._discover_instance_and_processor("http://host:8090", "sim", "nope")
 
     def test_processor_requires_instance(self):
         with pytest.raises(ValueError):
             YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_processor="replay")
+
+
+class TestRedactUrl:
+    def test_redacts_userinfo_only(self):
+        assert redact_url("http://user:secret@host:8090/path") == "http://host:8090/path"
+        assert redact_url("https://user@host") == "https://host"
+        assert redact_url("http://host:8090") == "http://host:8090"
+
+    def test_discovery_errors_do_not_leak_credentials(self):
+        lib_client = MagicMock()
+        lib_client.list_instances.return_value = []
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
+            with pytest.raises(RuntimeError) as info:
+                YamcsClient._discover_instance_and_processor("http://user:secret@host:8090")
+        assert "secret" not in str(info.value)
+
+
+class TestEntryPointMetadata:
+    def test_wheel_metadata_declares_fprime_gds_entry_point(self):
+        from importlib.metadata import entry_points
+
+        matches = [ep for ep in entry_points(group="fprime_gds") if ep.name == "yamcs"]
+        assert [ep.value for ep in matches] == ["fprime_yamcs.gds.transport:YamcsClient"]
+        assert matches[0].load() is YamcsClient
