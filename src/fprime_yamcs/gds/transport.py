@@ -214,7 +214,7 @@ class YamcsClient(TransportClient):
                 "dest": "yamcs_processor",
                 "action": "store",
                 "type": str,
-                "help": f"YAMCS processor to use (requires --yamcs-instance); {DEFAULT_PROCESSOR_NAME}, else the first "
+                "help": f"YAMCS processor to use; {DEFAULT_PROCESSOR_NAME}, else the first "
                 "processor, when not given [default: %(default)s]",
                 "default": None,
             },
@@ -222,8 +222,6 @@ class YamcsClient(TransportClient):
 
     @classmethod
     def check_arguments(cls, yamcs_url, yamcs_instance=None, yamcs_processor=None):
-        if yamcs_processor and not yamcs_instance:
-            raise ValueError("--yamcs-processor requires --yamcs-instance")
         if "://" in yamcs_url and not yamcs_url.startswith(("http://", "https://")):
             raise ValueError(
                 f"--yamcs-url must be an http:// or https:// URL (or host[:port]), got: {redact_url(yamcs_url)}"

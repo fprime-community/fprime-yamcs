@@ -274,11 +274,16 @@ class TestPluginRegistration:
             with pytest.raises(RuntimeError, match="processor nope not found"):
                 YamcsClient._discover_instance_and_processor("http://host:8090", "sim", "nope")
 
-    def test_processor_requires_instance(self):
-        with pytest.raises(ValueError, match="requires --yamcs-instance"):
-            YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_processor="replay")
-        YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_instance="sim", yamcs_processor="replay")
-        YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_instance="sim")
+    def test_processor_without_instance_is_validated_against_the_discovered_instance(self):
+        YamcsClient.check_arguments(yamcs_url="http://host:8090", yamcs_processor="replay")
+        lib_client = MagicMock()
+        lib_client.list_instances.return_value = [SimpleNamespace(name="only", state="RUNNING")]
+        lib_client.list_processors.return_value = [SimpleNamespace(name="realtime"), SimpleNamespace(name="replay")]
+        with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
+            assert YamcsClient._discover_instance_and_processor("http://host:8090", None, "replay") == ("only", "replay")
+            with pytest.raises(RuntimeError, match="processor zzz not found in instance only"):
+                YamcsClient._discover_instance_and_processor("http://host:8090", None, "zzz")
+        lib_client.list_processors.assert_called_with(instance="only")
 
     @pytest.mark.parametrize(
         "url, uri, http_url",
@@ -345,7 +350,7 @@ class TestPluginRegistration:
         with pytest.raises(SystemExit):
             ParserBase.parse_args(
                 [MiddleWareParser],
-                arguments=["--data-transport-selection", "yamcs", "--yamcs-processor", "replay"],
+                arguments=["--data-transport-selection", "yamcs", "--yamcs-url", "ftp://host:8090"],
                 client=True,
             )
 
