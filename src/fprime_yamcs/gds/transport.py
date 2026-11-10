@@ -425,7 +425,7 @@ class YamcsClient(TransportClient):
                 raise RuntimeError("YAMCS processor %s not found in instance %s at %s" % (processor_name, instance, redact_url(yamcs_url)))
             return instance, processor_name
         if not processors:
-            raise RuntimeError("No processors found for YAMCS instance %s at %s" % (instance, yamcs_url))
+            raise RuntimeError("No processors found for YAMCS instance %s at %s" % (instance, redact_url(yamcs_url)))
         realtime = [p for p in processors if p.name == DEFAULT_PROCESSOR_NAME]
         processor_name = realtime[0].name if realtime else processors[0].name
         LOGGER.info("Auto-discovered YAMCS instance=%s, processor=%s", instance, processor_name)

@@ -61,7 +61,7 @@ jobs:
 
   # The yamcs GDS data-transport plugin registers through the fprime_gds entry point; exercise it against
   # the fprime-gds development branch, which gains the data_transport plugin category with nasa/fprime-gds#386
-  # (nasa/fprime#5546); until then the plugin discovery test skips itself.
+  # (nasa/fprime#5546); until then the tests that need the category (plugin discovery, CLI argument flow) skip themselves.
   unit-tests-gds-devel:
     needs: build
     runs-on: ubuntu-latest

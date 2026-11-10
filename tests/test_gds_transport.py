@@ -348,13 +348,25 @@ class TestRedactUrl:
         assert redact_url("https://user@host") == "https://host"
         assert redact_url("http://host:8090") == "http://host:8090"
 
-    def test_discovery_errors_do_not_leak_credentials(self):
+    @pytest.mark.parametrize(
+        "instances, processors, kwargs",
+        [
+            ([], [], {}),
+            (["a", "b"], [], {}),
+            (["a"], ["realtime"], {"instance": "zzz"}),
+            (["a"], ["realtime"], {"instance": "a", "processor_name": "zzz"}),
+            (["a"], [], {}),
+        ],
+    )
+    def test_discovery_errors_do_not_leak_credentials(self, instances, processors, kwargs):
         lib_client = MagicMock()
-        lib_client.list_instances.return_value = []
+        lib_client.list_instances.return_value = [SimpleNamespace(name=n, state="RUNNING") for n in instances]
+        lib_client.list_processors.return_value = [SimpleNamespace(name=n) for n in processors]
         with patch("fprime_yamcs.gds.transport.YamcsLibClient", return_value=lib_client):
             with pytest.raises(RuntimeError) as info:
-                YamcsClient._discover_instance_and_processor("http://user:secret@host:8090")
+                YamcsClient._discover_instance_and_processor("http://user:secret@host:8090", **kwargs)
         assert "secret" not in str(info.value)
+        assert "host:8090" in str(info.value)
 
 
 class TestEntryPointMetadata:
