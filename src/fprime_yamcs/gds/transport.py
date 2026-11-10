@@ -10,7 +10,7 @@ connects the GDS pipeline (GUI, fprime-cli, Integration Test API) to a YAMCS ser
 import datetime
 import logging
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 from pathlib import Path
 
 from fprime_gds.common.data_types.ch_data import ChData
@@ -50,11 +50,13 @@ def split_credentials(url):
     from yamcs.client import Credentials
 
     clean = urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
-    return clean, Credentials(username=parts.username, password=parts.password)
+    return clean, Credentials(username=unquote(parts.username or ""), password=unquote(parts.password or ""))
 
 
 def redact_url(url):
     """Drop user:password from an http(s) URL before it is logged or placed in an exception message"""
+    if "://" not in url:
+        return url.rsplit("@", 1)[-1]
     parts = urlsplit(url)
     if "@" not in parts.netloc:
         return url
@@ -78,9 +80,10 @@ class YamcsWrapper:
         self.instance = None
         self.namespace = ""
 
-    def configure(self, yamcs_url, instance, processor_name):
+    def configure(self, yamcs_url, instance, processor_name, credentials=None):
         self.instance = instance
-        yamcs_url, credentials = split_credentials(yamcs_url)
+        yamcs_url, url_credentials = split_credentials(yamcs_url)
+        credentials = credentials or url_credentials
         LOGGER.info("Connecting to YAMCS: %s, instance=%s, processor=%s", yamcs_url, instance, processor_name)
         self.yamcs_client = YamcsLibClient(yamcs_url, credentials=credentials)
         self.processor = self.yamcs_client.get_processor(instance=instance, processor=processor_name)
@@ -166,6 +169,7 @@ class YamcsClient(TransportClient):
         super().__init__()
         self.yamcs = YamcsWrapper()
         self.default_uri = self.get_connection_uri(yamcs_url=yamcs_url or self.DEFAULT_URL)
+        _, self.credentials = split_credentials(yamcs_url or self.DEFAULT_URL)
         self.instance_override = yamcs_instance or None
         self.processor_override = yamcs_processor or None
         self.dictionaries = None
@@ -226,22 +230,28 @@ class YamcsClient(TransportClient):
             raise ValueError(
                 f"--yamcs-url must be an http:// or https:// URL (or host[:port]), got: {redact_url(yamcs_url)}"
             )
+        parts = urlsplit(yamcs_url if "://" in yamcs_url else "http://" + yamcs_url)
+        if "@" in parts.netloc and not (parts.username and parts.password is not None):
+            raise ValueError("--yamcs-url credentials must be user:password@ (both parts, percent-encoded)")
 
     @classmethod
     def get_connection_uri(cls, client=True, yamcs_url=DEFAULT_URL, **_):
-        """yamcs://host[:port] or yamcs+https://host[:port] from the HTTP(S) URL"""
+        """yamcs://host[:port] or yamcs+https://host[:port] from the HTTP(S) URL; user:password@ stays out of the URI
+        (the plugin keeps it as yamcs-client Credentials) so the connection URI can be logged or echoed freely"""
         cls.check_arguments(yamcs_url=yamcs_url)
+        yamcs_url = redact_url(yamcs_url if "://" in yamcs_url else "http://" + yamcs_url)
         if yamcs_url.startswith("https://"):
             return YAMCS_SECURE_URI_SCHEME + yamcs_url[len("https://"):]
         return YAMCS_URI_SCHEME + yamcs_url.replace("http://", "", 1)
 
     def connect(self, connection_uri=None, incoming_routing=None, outgoing_routing=None):
         connection_uri = self.default_uri if connection_uri is None else connection_uri
-        yamcs_url = self._parse_uri(connection_uri)
+        yamcs_url, credentials = split_credentials(self._parse_uri(connection_uri))
+        credentials = credentials or self.credentials
         instance, processor_name = self._discover_instance_and_processor(
-            yamcs_url, self.instance_override, self.processor_override
+            yamcs_url, self.instance_override, self.processor_override, credentials
         )
-        self.yamcs.configure(yamcs_url, instance, processor_name)
+        self.yamcs.configure(yamcs_url, instance, processor_name, credentials)
         self.yamcs.subscribe(
             parameter_names=self._build_parameter_list(),
             on_parameter_callback=self._on_parameter_data,
@@ -425,11 +435,11 @@ class YamcsClient(TransportClient):
         return scheme + transport_url.split("/")[0]
 
     @staticmethod
-    def _discover_instance_and_processor(yamcs_url, instance=None, processor_name=None):
+    def _discover_instance_and_processor(yamcs_url, instance=None, processor_name=None, credentials=None):
         """Resolve the YAMCS instance and processor: the explicit names when given (validated against the
         server), otherwise the single running instance and its 'realtime' processor (else the first one)"""
-        yamcs_url, credentials = split_credentials(yamcs_url)
-        client = YamcsLibClient(yamcs_url, credentials=credentials)
+        yamcs_url, url_credentials = split_credentials(yamcs_url)
+        client = YamcsLibClient(yamcs_url, credentials=credentials or url_credentials)
         running = [i for i in client.list_instances() if i.state == "RUNNING"]
         if instance is not None:
             if instance not in [i.name for i in running]:

@@ -255,8 +255,8 @@ class TestPluginRegistration:
         client.yamcs = MagicMock()
         with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("sim", "replay")) as discover:
             client.connect()
-        discover.assert_called_once_with("http://host:8090", "sim", "replay")
-        client.yamcs.configure.assert_called_once_with("http://host:8090", "sim", "replay")
+        discover.assert_called_once_with("http://host:8090", "sim", "replay", None)
+        client.yamcs.configure.assert_called_once_with("http://host:8090", "sim", "replay", None)
 
     def test_instance_override_discovers_processor(self):
         lib_client = MagicMock()
@@ -311,8 +311,8 @@ class TestPluginRegistration:
         with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=discovered) as discover:
             with patch.object(YamcsClient, "_build_parameter_list", return_value=["/a", "/b"]):
                 client.connect()
-        discover.assert_called_once_with("http://host:8090", None, None)
-        client.yamcs.configure.assert_called_once_with("http://host:8090", "auto", "realtime")
+        discover.assert_called_once_with("http://host:8090", None, None, None)
+        client.yamcs.configure.assert_called_once_with("http://host:8090", "auto", "realtime", None)
         kwargs = client.yamcs.subscribe.call_args.kwargs
         assert kwargs["parameter_names"] == ["/a", "/b"]
         assert kwargs["on_parameter_callback"] == client._on_parameter_data
@@ -389,6 +389,28 @@ class TestRedactUrl:
         assert url == "https://host:8443/base"
         assert isinstance(credentials, Credentials)
         assert (credentials.username, credentials.password) == ("user", "secret")
+        _, credentials = split_credentials("http://us%40er:p%40ss%2Fw%3Ard@host:8090")
+        assert (credentials.username, credentials.password) == ("us@er", "p@ss/w:rd")
+
+    def test_credentials_stay_out_of_the_connection_uri_and_are_used_at_connect(self):
+        assert YamcsClient.get_connection_uri(yamcs_url="http://user:secret@host:8090") == "yamcs://host:8090"
+        assert YamcsClient.get_connection_uri(yamcs_url="user:secret@host:8090") == "yamcs://host:8090"
+        assert redact_url("user:secret@host:8090") == "host:8090"
+        client = YamcsClient(yamcs_url="https://user:secret@host:8443")
+        assert client.default_uri == "yamcs+https://host:8443"
+        assert (client.credentials.username, client.credentials.password) == ("user", "secret")
+        client.dictionaries = MagicMock()
+        client.yamcs = MagicMock()
+        with patch.object(YamcsClient, "_discover_instance_and_processor", return_value=("a", "realtime")) as discover:
+            client.connect()
+        assert discover.call_args.args[0] == "https://host:8443"
+        assert discover.call_args.args[3] is client.credentials
+        assert client.yamcs.configure.call_args.args == ("https://host:8443", "a", "realtime", client.credentials)
+
+    def test_user_without_password_is_rejected(self):
+        with pytest.raises(ValueError, match="user:password@"):
+            YamcsClient.check_arguments(yamcs_url="http://user@host:8090")
+        YamcsClient.check_arguments(yamcs_url="http://user:@host:8090")
 
     def test_credentials_are_passed_to_yamcs_client_not_the_url(self, caplog):
         lib_client = MagicMock()

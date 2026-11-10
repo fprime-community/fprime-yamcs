@@ -120,12 +120,15 @@ pytest test/int --dictionary <dict.json> --data-transport-selection yamcs --yamc
 | `--yamcs-instance` | the single running instance | YAMCS instance to use; required when several instances run |
 | `--yamcs-processor` | `realtime`, else the first processor of the instance | YAMCS processor to use (validated against the server) |
 
+File uplink from the GDS (`fprime-cli`/test API `upload_file`) goes through the YAMCS file-transfer service
+`FprimeFilePacketService` of the selected instance; the transport polls the transfer until it completes or fails.
+
 > [!NOTE]
 > Requires an `fprime-gds` with the `data_transport` plugin category ([nasa/fprime-gds#386](https://github.com/nasa/fprime-gds/pull/386)). Earlier `fprime-gds` releases (4.4.x) ship a
 > built-in `fprime_gds.common.yamcs_transport` enabled by the pytest `--use-yamcs` / `--yamcs-url` options only
-> (no `--yamcs-instance` / `--yamcs-processor`, `yamcs-client<2`); the plugin from this package takes precedence
-> over that built-in when both are installed; the GDS then logs `Ignoring data_transport plugin 'yamcs' from
-> fprime_gds.common.yamcs_transport: already registered by fprime_yamcs.gds.transport` once at start-up, which is
+> (no `--yamcs-instance` / `--yamcs-processor`, `yamcs-client<2`); on an fprime-gds that has the `data-transport`
+> category, the plugin from this package takes precedence over that built-in when both are installed; the GDS then logs `Ignoring data_transport plugin 'yamcs' from
+> fprime_gds.common.yamcs_transport: already registered by fprime_yamcs.gds.transport` once per GDS process, which is
 > expected until fprime-gds drops its built-in.
 
 ## Configuration 
