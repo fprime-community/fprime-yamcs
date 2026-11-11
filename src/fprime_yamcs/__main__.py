@@ -20,9 +20,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import atexit
+import copy
 import fnmatch
 import os
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,6 +47,7 @@ from fprime_gds.plugin.system import Plugins
 from fprime_gds.common.communication.bridge import DEFAULT_COMMUNICATION, DEFAULT_FRAMING
 from fprime_gds.executables.comm_bridge import GROUND_ADAPTER as BRIDGE_GROUND_ADAPTER
 
+from fprime_yamcs.dictionary import deployment_name
 from fprime_yamcs.java import (
     JavaResolutionException,
     build_classpath,
@@ -67,6 +70,14 @@ BRIDGE_GROUND_OPTION_PREFIX = f"--{BRIDGE_GROUND_SELECTION}-"
 
 # The launcher only selects the communication adapter; framing is fixed to the bridge default
 LAUNCHER_PLUGIN_CATEGORIES = ["communication"]
+# Each secondary spacecraft gets its own YAMCS UDP links on the primary ports plus this stride times its index
+SECONDARY_PORT_STRIDE = 10
+# Root of the container hierarchy fprime-to-xtce generates in every space system; TM streams are bound to it
+XTCE_ROOT_CONTAINER = "CCSDSSpacePacket"
+# YAMCS link classes rewritten by the launcher
+TM_FRAME_LINK = "org.yamcs.tctm.ccsds.UdpTmFrameLink"
+TM_PACKET_LINK = "org.yamcs.tctm.UdpTmDataLink"
+TC_FRAME_LINK = "org.yamcs.tctm.ccsds.UdpTcFrameLink"
 
 
 def sdls_encryption_config(key_file: Path, spi: int) -> Dict[str, Any]:
@@ -197,6 +208,51 @@ def launch_comm_bridge(parsed_args):
     )
 
 
+def secondary_comm_bridge_arguments(parsed_args, index: int, dictionary: Path, bridge_arguments: str) -> List[str]:
+    """ Build the fprime-comm-bridge command line arguments for a secondary spacecraft
+
+    The operator supplies the adapter selection and options for the secondary's link as one string; the launcher
+    adds the secondary's dictionary (frame size and spacecraft id for the aggregating framer) and points the
+    bridge's `udp-fast` ground adapter at the secondary's YAMCS TM/TC ports. Framing defaults to the primary
+    bridge's framing unless the string selects one.
+
+    Args:
+        parsed_args: parsed argument namespace
+        index: 1-based position of the secondary dictionary
+        dictionary: the secondary dictionary
+        bridge_arguments: shell-style string of adapter arguments
+    Returns:
+        argument list for fprime-comm-bridge
+    """
+    uplink, downlink, _ = secondary_ports(index, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port,
+                                          parsed_args.udp_tm_inject_port)
+    adapter_arguments = without_options(shlex.split(bridge_arguments), BRIDGE_GROUND_OPTION_PREFIX)
+    framing = [] if "--framing-selection" in adapter_arguments else ["--framing-selection", DEFAULT_FRAMING]
+    return framing + adapter_arguments + [
+        "--dictionary", str(Path(dictionary).resolve()),
+        "--udp-fast-address", "127.0.0.1", "--udp-fast-send-port", str(downlink),
+        "--udp-fast-bind-address", "127.0.0.1", "--udp-fast-recv-port", str(uplink),
+    ]
+
+
+def launch_secondary_comm_bridges(parsed_args) -> List[Any]:
+    """ Launch one fprime-comm-bridge per secondary dictionary that has bridge arguments
+
+    Args:
+        parsed_args: parsed argument namespace
+    Return:
+        launched processes
+    """
+    processes = []
+    secondaries = zip(parsed_args.secondary_dictionary, parsed_args.secondary_bridge_arguments)
+    for index, (dictionary, bridge_arguments) in enumerate(secondaries, start=1):
+        print(f"[INFO] Bridging secondary spacecraft {index} ({dictionary}) to YAMCS with fprime-comm-bridge")
+        bridge_cmd = BASE_MODULE_ARGUMENTS + ["fprime_gds.executables.comm_bridge"] + \
+            secondary_comm_bridge_arguments(parsed_args, index, dictionary, bridge_arguments)
+        processes.append(launch_process(bridge_cmd, name=f"fprime-comm-bridge[secondary {index}]", launch_time=1))
+    return processes
+
+
 class YamcsParser(ParserBase):
     """Parser for YAMCS specific arguments"""
 
@@ -300,6 +356,28 @@ class YamcsParser(ParserBase):
                 "help": "SDLS security parameter index (SA) used for TM and TC. Must match the deployment's SdlsSaRouter "
                         "map entry for the AES-GCM encryptor/decryptor. Default: %(default)s",
             },
+            ("--secondary-dictionary",): {
+                "action": "store",
+                "nargs": "+",
+                "default": [],
+                "type": Path,
+                "metavar": "DICTIONARY",
+                "help": "F Prime dictionaries of additional spacecraft received by the same YAMCS instance. Each must "
+                        "carry a distinct ComCfg.SpacecraftId and deployment name. Secondary N gets its own XTCE space "
+                        "system, TM/TC frame links and split-telemetry link on the primary UDP ports plus "
+                        f"{SECONDARY_PORT_STRIDE}*N, and its own event and channel processors.",
+            },
+            ("--secondary-bridge-arguments",): {
+                "action": "store",
+                "nargs": "+",
+                "default": [],
+                "metavar": "ARGUMENTS",
+                "help": "fprime-comm-bridge adapter arguments for the secondary dictionaries, one quoted string per "
+                        "secondary in the same order (e.g. '--communication-selection uart --uart-device /dev/ttyACM1 "
+                        "--uart-baud 115200'). The launcher starts one bridge per entry on that secondary's UDP ports; "
+                        "framing defaults to the primary bridge's, pass --framing-selection to override. Secondaries "
+                        "without an entry are not bridged by the launcher.",
+            },
         }
 
     def handle_arguments(self, args, **kwargs):
@@ -338,6 +416,12 @@ class YamcsParser(ParserBase):
                                 f"AES-256-GCM requires exactly {SDLS_AES_256_KEY_SIZE} bytes.")
             if not 0 < args.yamcs_sdls_spi <= 0xFFFF:
                 raise Exception(f"[ERROR] SDLS SPI {args.yamcs_sdls_spi} must be in the range 1-65535.")
+        for secondary in args.secondary_dictionary:
+            if not secondary.is_file():
+                raise Exception(f"[ERROR] Secondary dictionary {secondary} is not a file.")
+        if len(args.secondary_bridge_arguments) > len(args.secondary_dictionary):
+            raise Exception(f"[ERROR] {len(args.secondary_bridge_arguments)} --secondary-bridge-arguments entries for "
+                            f"{len(args.secondary_dictionary)} --secondary-dictionary entries.")
         return args
 
 def yamcs_instances(config_directory: Path) -> List[str]:
@@ -363,6 +447,29 @@ def yamcs_instances(config_directory: Path) -> List[str]:
         return instance_config["instances"]
     except KeyError:
         raise Exception(f"No instances found in YAMCS configuration {yamcs_yaml}")
+
+
+def tool_path(name: str) -> str:
+    """ Path of a console script (fprime-to-xtce, fprime-yamcs-events, ...): the one installed next to this
+    interpreter, else resolved from PATH, else the bare name
+
+    Lets the launcher and the ProcessRunner services it configures work when fprime-yamcs is started by path
+    (e.g. venv/bin/fprime-yamcs) without the venv on PATH.
+    """
+    sibling = Path(sys.executable).parent / name
+    if sibling.is_file():
+        return str(sibling)
+    return shutil.which(name) or name
+
+
+def resolve_processor_commands(instance_config: dict):
+    """ Point every ProcessRunner service of the instance at the installed console script (see tool_path) """
+    for service in instance_config.get("services", []):
+        if service.get("class", "") != "org.yamcs.ProcessRunner":
+            continue
+        command = service.get("args", {}).get("command")
+        if isinstance(command, list) and command:
+            command[0] = tool_path(command[0])
 
 
 def xtce_mdb_location(config_directory: Path, instances: List[str]) -> Tuple[Path, str]:
@@ -470,6 +577,150 @@ def get_packet_ids(dictionary: Path, channel_patterns: List[str]) -> List[int]:
     return sorted(packet_ids)
 
 
+def secondary_ports(index: int, uplink_port: int, downlink_port: int, tm_inject_port: int) -> Tuple[int, int, int]:
+    """ UDP ports of the YAMCS links serving secondary spacecraft `index` (1-based)
+
+    Args:
+        index: 1-based position of the secondary dictionary
+        uplink_port: primary TC port
+        downlink_port: primary TM frame port
+        tm_inject_port: primary split-telemetry port
+    Returns:
+        (uplink, downlink, tm inject) ports of the secondary
+    """
+    offset = SECONDARY_PORT_STRIDE * index
+    return uplink_port + offset, downlink_port + offset, tm_inject_port + offset
+
+
+def bind_stream(stream_config: dict, stream_type: str, stream_name: str, key: str, value: Any):
+    """ Set a property on a named stream entry of a YAMCS streamConfig section
+
+    Args:
+        stream_config: the instance's streamConfig mapping
+        stream_type: "tm" or "tc"
+        stream_name: name of the stream to bind
+        key: property to set (e.g. "rootContainer", "tcPatterns")
+        value: property value
+    """
+    for entry in stream_config.get(stream_type, []):
+        if isinstance(entry, dict) and entry.get("name") == stream_name:
+            entry[key] = value
+            return
+    raise Exception(f"[ERROR] Stream {stream_name} not found in the YAMCS streamConfig {stream_type} section.")
+
+
+def link_template(instance_config: dict, link_class: str) -> Optional[dict]:
+    """ Copy of the first data link of the given class, used as the template for a secondary spacecraft's link
+
+    Primary-only settings are dropped from the copy: SDLS keys belong to the primary spacecraft and the
+    do-not-archive filters are resolved against the primary dictionary.
+
+    Args:
+        instance_config: a parsed yamcs.<instance>.yaml configuration
+        link_class: fully qualified YAMCS link class
+    Returns:
+        a copy of the link configuration, or None when the instance has no such link
+    """
+    for link in instance_config.get("dataLinks", []):
+        if link.get("class", "") == link_class:
+            template = copy.deepcopy(link)
+            template.pop("encryption", None)
+            template.pop("packetPreprocessorArgs", None)
+            for vc in template.get("virtualChannels", []):
+                vc.pop("encryptionSpis", None)
+                vc.pop("encryptionSpi", None)
+                vc.pop("packetPreprocessorArgs", None)
+            return template
+    return None
+
+
+def processor_service(command: List[str]) -> dict:
+    """ YAMCS ProcessRunner service entry running one of the fprime-yamcs processors """
+    return {"class": "org.yamcs.ProcessRunner", "args": {"command": command, "restart": "always", "logLevel": "INFO"}}
+
+
+def configure_secondary_spacecraft(instance_config: dict, mdb_directory: Path, dictionary: Path,
+                                   secondary_dictionaries: List[Path], uplink_port: int, downlink_port: int,
+                                   tm_inject_port: int):
+    """ Add an XTCE space system, frame links, streams and processors for every secondary spacecraft
+
+    A YAMCS TM frame link only accepts frames carrying its configured spacecraft id and a TM stream decodes packets
+    against one root container, so each additional spacecraft needs its own TM/TC frame links (distinct UDP ports
+    and spacecraft id), its own TM/TC streams bound to its space system with `rootContainer` / `tcPatterns`, and
+    its own event and split-channel processors. The primary streams are bound the same way so neither space system
+    claims the other's packets or commands.
+
+    Args:
+        instance_config: a parsed yamcs.<instance>.yaml configuration, already set up for the primary dictionary
+        mdb_directory: directory of the primary XTCE file, where the secondary XTCE files are written
+        dictionary: the primary F Prime dictionary
+        secondary_dictionaries: F Prime dictionaries of the secondary spacecraft, in port order
+        uplink_port: primary TC port
+        downlink_port: primary TM frame port
+        tm_inject_port: primary split-telemetry port
+    """
+    dictionaries = [dictionary] + list(secondary_dictionaries)
+    names = [deployment_name(path) for path in dictionaries]
+    spacecraft_ids = [get_dictionary_constant(path, "ComCfg.SpacecraftId") for path in dictionaries]
+    duplicate_names = sorted({name for name in names if names.count(name) > 1})
+    if duplicate_names:
+        raise Exception(f"[ERROR] Dictionaries share the deployment name(s) {duplicate_names}; each spacecraft "
+                        "needs a distinct deployment name to get its own XTCE space system.")
+    duplicate_ids = sorted({scid for scid in spacecraft_ids if spacecraft_ids.count(scid) > 1})
+    if duplicate_ids:
+        raise Exception(f"[ERROR] Dictionaries share ComCfg.SpacecraftId {duplicate_ids}; YAMCS tells spacecraft "
+                        "apart by the spacecraft id of their TM/TC frames.")
+
+    stream_config = instance_config.setdefault("streamConfig", {})
+    tm_template = link_template(instance_config, TM_FRAME_LINK)
+    split_template = link_template(instance_config, TM_PACKET_LINK)
+    tc_template = link_template(instance_config, TC_FRAME_LINK)
+    if tm_template is None or tc_template is None:
+        raise Exception(f"[ERROR] Secondary dictionaries need a {TM_FRAME_LINK} and a {TC_FRAME_LINK} in the "
+                        "YAMCS instance configuration to copy.")
+    primary_tm_stream = tm_template["virtualChannels"][0]["stream"]
+    primary_tc_stream = tc_template["virtualChannels"][0]["stream"]
+    bind_stream(stream_config, "tm", primary_tm_stream, "rootContainer", f"/{names[0]}/{XTCE_ROOT_CONTAINER}")
+    bind_stream(stream_config, "tc", primary_tc_stream, "tcPatterns", [f"/{names[0]}/.*"])
+
+    for index, secondary in enumerate(secondary_dictionaries, start=1):
+        name = names[index]
+        uplink, downlink, inject = secondary_ports(index, uplink_port, downlink_port, tm_inject_port)
+        xtce_path = mdb_directory / f"fprime-{name}.xtce.xml"
+        print(f"[INFO] Converting secondary dictionary {secondary} to {xtce_path} (spacecraft id "
+              f"{spacecraft_ids[index]}, TM {downlink}, TC {uplink}, split {inject})")
+        subprocess.run([tool_path("fprime-to-xtce"), "-o", str(xtce_path), str(secondary)], check=True)
+        instance_config.setdefault("mdb", []).append({"type": "xtce", "args": {"file": str(xtce_path)}})
+
+        tm_stream, tc_stream = f"tm_{name}", f"tc_{name}"
+        tm_link = copy.deepcopy(tm_template)
+        tm_link.update(name=f"UDP_TM_IN_{name}", port=downlink, spacecraftId=spacecraft_ids[index],
+                       frameLength=get_dictionary_constant(secondary, "ComCfg.TmFrameFixedSize"))
+        for vc in tm_link.get("virtualChannels", []):
+            vc["stream"] = tm_stream
+        tc_link = copy.deepcopy(tc_template)
+        tc_link.update(name=f"UDP_TC_OUT_{name}", port=uplink, spacecraftId=spacecraft_ids[index],
+                       maxFrameLength=tm_link["frameLength"])
+        for vc in tc_link.get("virtualChannels", []):
+            vc["stream"] = tc_stream
+        instance_config["dataLinks"].extend([tm_link, tc_link])
+        if split_template is not None:
+            split_link = copy.deepcopy(split_template)
+            split_link.update(name=f"UDP_TM_SPLIT_IN_{name}", port=inject, stream=tm_stream)
+            instance_config["dataLinks"].append(split_link)
+        stream_config.setdefault("tm", []).append(
+            {"name": tm_stream, "processor": "realtime", "rootContainer": f"/{name}/{XTCE_ROOT_CONTAINER}"})
+        stream_config.setdefault("tc", []).append(
+            {"name": tc_stream, "processor": "realtime", "tcPatterns": [f"/{name}/.*"]})
+
+        secondary_path = str(Path(secondary).resolve())
+        instance_config.setdefault("services", []).extend([
+            processor_service(["fprime-yamcs-events", "--dictionary", secondary_path, "--space-system", name]),
+            processor_service(["fprime-yamcs-tlmchan", "--dictionary", secondary_path, "--space-system", name,
+                               "--inject-port", str(inject)]),
+        ])
+
+
 def anchor_relative_mdb_paths(instance_config: dict, base_directory: Path) -> bool:
     """ Anchor relative MDB file paths in an instance configuration to a base directory
 
@@ -488,7 +739,7 @@ def anchor_relative_mdb_paths(instance_config: dict, base_directory: Path) -> bo
     return changed
 
 
-def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, tm_inject_port: int, realtime_only_channels: List[str], sdls_key_file: Optional[Path] = None, sdls_spi: int = 1) -> Tuple[Path, str]:
+def construct_temporary_configuration(config_directory: Path, instances: List[str], dictionary: Path, uplink_port: int, downlink_port: int, tm_inject_port: int, realtime_only_channels: List[str], sdls_key_file: Optional[Path] = None, sdls_spi: int = 1, secondary_dictionaries: Optional[List[Path]] = None) -> Tuple[Path, str]:
     """ Construct a temporary YAMCS configuration directory
 
     The YAMCS configuration that ships with fprime-yamcs needs to be modified in several specific ways before running
@@ -499,6 +750,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         4. Marking realtime-only telemetry channels as "do not archive" and switching the parameter
            archive to backfilling so those channels never reach the archives
         5. Optionally enabling SDLS AES-256-GCM decryption (TM) and encryption (TC) on the frame links
+        6. Adding a space system, frame links, streams and processors for every secondary spacecraft dictionary
     Args:
         config_directory: The YAMCS configuration directory to use as a base for the temporary configuration
         instances: A list of YAMCS instance names to consider for configuration
@@ -509,6 +761,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
         realtime_only_channels: Telemetry channel name patterns to keep realtime-only (not archived)
         sdls_key_file: 32-byte AES-256 key file enabling SDLS on the TM/TC frame links, or None to leave frames clear-text
         sdls_spi: SDLS security parameter index to use when sdls_key_file is set
+        secondary_dictionaries: F Prime dictionaries of additional spacecraft received by the same instance
     Returns:
         The path to the temporary YAMCS configuration directory and the fprime identified instance
     """
@@ -522,7 +775,7 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
     xtce_dictionary, fprime_instance = xtce_mdb_location(yamcs_working_config_dir, instances)
 
     print(f"[INFO] Updating YAMCS XTCE dictionary from {dictionary} to {xtce_dictionary}")
-    subprocess.run(["fprime-to-xtce", "-o", str(xtce_dictionary), str(dictionary)], check=True)
+    subprocess.run([tool_path("fprime-to-xtce"), "-o", str(xtce_dictionary), str(dictionary)], check=True)
 
     # YAMCS is launched without a controlled working directory, so relative MDB paths in
     # every instance configuration must be anchored to the temporary configuration directory
@@ -591,6 +844,10 @@ def construct_temporary_configuration(config_directory: Path, instances: List[st
                 args = service.setdefault("args", {})
                 args.setdefault("realtimeFiller", {})["enabled"] = False
                 args.setdefault("backFiller", {})["automaticBackfilling"] = True
+    if secondary_dictionaries:
+        configure_secondary_spacecraft(instance_config, xtce_dictionary.parent, dictionary, secondary_dictionaries,
+                                       uplink_port, downlink_port, tm_inject_port)
+    resolve_processor_commands(instance_config)
     with instance_path.open("w") as f:
         yaml.safe_dump(instance_config, f)
 
@@ -755,12 +1012,14 @@ def main():
         if not instances:
             raise Exception(f"No YAMCS instances found in {parsed_args.yamcs_config_dir / 'etc/yamcs.yaml'}")
 
-        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port, parsed_args.udp_tm_inject_port, parsed_args.yamcs_realtime_only_channels, parsed_args.yamcs_sdls_key_file, parsed_args.yamcs_sdls_spi)
+        yamcs_config_dir, fprime_instance = construct_temporary_configuration(parsed_args.yamcs_config_dir, instances, parsed_args.dictionary, parsed_args.udp_uplink_port, parsed_args.udp_downlink_port, parsed_args.udp_tm_inject_port, parsed_args.yamcs_realtime_only_channels, parsed_args.yamcs_sdls_key_file, parsed_args.yamcs_sdls_spi, parsed_args.secondary_dictionary)
         parsed_args.yamcs_config_dir = yamcs_config_dir
         if parsed_args.yamcs_events_instance is None:
             parsed_args.yamcs_events_instance = fprime_instance
         launched_apps = [launch_deployment_app] if parsed_args.app is not None else []
-        processes = [launcher(parsed_args) for launcher in launched_bridges + launched_apps + [launch_yamcs]]
+        processes = [launcher(parsed_args) for launcher in launched_bridges + launched_apps]
+        processes += launch_secondary_comm_bridges(parsed_args)
+        processes.append(launch_yamcs(parsed_args))
         if parsed_args.gui == "html":
             launch_browser(parsed_args)
         print("[INFO] F Prime/YAMCS is now running. CTRL-C to shutdown all components.")

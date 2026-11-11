@@ -131,6 +131,36 @@ File uplink from the GDS (`fprime-cli`/test API `upload_file`) goes through the 
 > fprime_gds.common.yamcs_transport: already registered by fprime_yamcs.gds.transport` once per GDS process, which is
 > expected until fprime-gds drops its built-in.
 
+## Multiple spacecraft (secondary dictionaries)
+
+One `fprime-yamcs` instance can receive several F Prime deployments at once, e.g. a flight unit and the
+ground radio relaying it, as long as each has its own `ComCfg.SpacecraftId` and deployment name. Pass the
+extra dictionaries with `--secondary-dictionary`:
+
+```sh
+fprime-yamcs -n --dictionary flight/dict/FlightTopologyDictionary.json \
+    --communication-selection uart --uart-device /dev/ttyACM2 --uart-baud 115200 \
+    --secondary-dictionary ground/dict/GroundRadioTopologyDictionary.json \
+    --secondary-bridge-arguments "--communication-selection uart --uart-device /dev/ttyACM1 --uart-baud 115200"
+```
+
+Secondary N (1-based) gets, in the same YAMCS instance:
+
+- its own XTCE space system (`/<DeploymentName>/...`), converted from its dictionary like the primary;
+- a TM frame link, TC frame link and split-telemetry link copied from the primary's, carrying that dictionary's
+  spacecraft id and frame size, on the primary UDP ports plus `10*N` (TM 50010, TC 50011, split 50012 for the
+  first secondary with the default ports);
+- TM/TC streams bound to its space system with `rootContainer` / `tcPatterns` (the primary streams are bound the
+  same way), so each deployment's packets and commands only match its own XTCE;
+- its own `fprime-yamcs-events` and `fprime-yamcs-tlmchan` processors (`--space-system <DeploymentName>`).
+
+`--secondary-bridge-arguments` takes one quoted string of `fprime-comm-bridge` adapter arguments per secondary,
+in order; the launcher starts a bridge per entry on that secondary's TM/TC ports, with the primary's framing
+unless the string selects one (`--framing-selection`). Secondaries without an entry are not bridged: run your
+own `fprime-comm-bridge --dictionary <secondary> --udp-fast-send-port <TM> --udp-fast-recv-port <TC> ...`.
+SDLS and `--yamcs-realtime-only-channels` apply to the primary dictionary only. Parameters of the deployments
+are distinct YAMCS parameters, so both can be plotted side by side.
+
 ## Configuration 
 
 YAMCS is powerful and has many configuration properties. `fprime-yamcs` requires one instance of YAMCS defined in the configuration to have the following MDB:

@@ -4,6 +4,7 @@ Unit tests cover splitting aggregate Svc.TlmChan packets into individual channel
 and re-injecting each record beyond the first as a standalone CCSDS space packet.
 """
 
+import json
 import socket
 import struct
 
@@ -132,3 +133,69 @@ class TestProcessChannelPacket:
         proc._process_channel_packet(FakePacket(make_packet(records)))
         packet = receiver.recv(2048)
         assert struct.unpack(">H", packet[2:4])[0] == 0xC000
+
+
+class FakeContainer:
+    def __init__(self, qualified_name):
+        self.qualified_name = qualified_name
+
+
+class FakeMdb:
+    def __init__(self, names):
+        self.names = names
+
+    def list_containers(self):
+        return [FakeContainer(name) for name in self.names]
+
+
+class FakeYamcsClient:
+    def __init__(self, names):
+        self.mdb = FakeMdb(names)
+
+    def get_mdb(self, instance):
+        return self.mdb
+
+
+def container_processor(tmp_path, names, space_system=None, deployment="Ref.Ref"):
+    """A processor with a fake MDB holding the given container names and a dictionary naming `deployment`"""
+    dictionary = tmp_path / "dict.json"
+    dictionary.write_text(json.dumps({"metadata": {"deploymentName": deployment}}))
+    proc = FPrimeTlmChanProcessor.__new__(FPrimeTlmChanProcessor)
+    proc.yamcs_client = FakeYamcsClient(names)
+    proc.yamcs_instance = "fprime-project"
+    proc.dictionary_path = dictionary
+    proc.space_system = space_system
+    return proc
+
+
+class TestChannelContainerName:
+    """The aggregate channel container is resolved under this deployment's space system"""
+
+    CONTAINERS = ["/Ref_Ref/FPrimeTelemetryChannel", "/Ref_Ref/FPrimeEvent", "/Ground_Ground/FPrimeTelemetryChannel"]
+
+    def test_explicit_space_system(self, tmp_path):
+        proc = container_processor(tmp_path, self.CONTAINERS, space_system="Ground_Ground")
+        assert proc._channel_container_name() == "/Ground_Ground/FPrimeTelemetryChannel"
+
+    def test_space_system_derived_from_dictionary(self, tmp_path):
+        proc = container_processor(tmp_path, self.CONTAINERS, deployment="Ground.Ground")
+        assert proc._channel_container_name() == "/Ground_Ground/FPrimeTelemetryChannel"
+
+    def test_single_candidate_under_another_name(self, tmp_path):
+        proc = container_processor(tmp_path, ["/Other/FPrimeTelemetryChannel"], deployment="Ref.Ref")
+        assert proc._channel_container_name() == "/Other/FPrimeTelemetryChannel"
+
+    def test_explicit_space_system_missing_rejected(self, tmp_path):
+        proc = container_processor(tmp_path, self.CONTAINERS, space_system="Nope")
+        with pytest.raises(RuntimeError, match="/Nope/FPrimeTelemetryChannel"):
+            proc._channel_container_name()
+
+    def test_ambiguous_candidates_rejected(self, tmp_path):
+        proc = container_processor(tmp_path, self.CONTAINERS, deployment="Other.Other")
+        with pytest.raises(RuntimeError, match="--space-system"):
+            proc._channel_container_name()
+
+    def test_no_candidates_rejected(self, tmp_path):
+        proc = container_processor(tmp_path, ["/Ref_Ref/FPrimeEvent"])
+        with pytest.raises(RuntimeError, match="No 'FPrimeTelemetryChannel'"):
+            proc._channel_container_name()
