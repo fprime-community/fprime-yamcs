@@ -135,7 +135,8 @@ File uplink from the GDS (`fprime-cli`/test API `upload_file`) goes through the 
 
 One `fprime-yamcs` instance can receive several F Prime deployments at once, e.g. a flight unit and the
 ground radio relaying it, as long as each has its own `ComCfg.SpacecraftId` and deployment name. Pass the
-extra dictionaries with `--secondary-dictionary`:
+extra dictionaries with `--secondary-dictionary`, which takes any number of paths (several after one flag, or
+the flag repeated; order is kept and defines N below):
 
 ```sh
 fprime-yamcs -n --dictionary flight/dict/FlightTopologyDictionary.json \
@@ -155,7 +156,7 @@ Secondary N (1-based) gets, in the same YAMCS instance:
 - its own `fprime-yamcs-events` and `fprime-yamcs-tlmchan` processors (`--space-system <DeploymentName>`).
 
 `--secondary-bridge-arguments` takes one quoted string of `fprime-comm-bridge` adapter arguments per secondary,
-in order; the launcher starts a bridge per entry on that secondary's TM/TC ports, with the primary's framing
+in order (several strings and/or a repeated flag, like `--secondary-dictionary`); the launcher starts a bridge per entry on that secondary's TM/TC ports, with the primary's framing
 unless the string selects one (`--framing-selection`). Secondaries without an entry are not bridged: run your
 own `fprime-comm-bridge --dictionary <secondary> --udp-fast-send-port <TM> --udp-fast-recv-port <TC> ...`.
 SDLS and `--yamcs-realtime-only-channels` apply to the primary dictionary only. Parameters of the deployments

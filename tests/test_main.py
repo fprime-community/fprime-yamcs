@@ -396,6 +396,36 @@ def contains_sequence(arguments, expected):
     return any(arguments[i:i + len(expected)] == expected for i in range(len(arguments)))
 
 
+class TestSecondaryArguments:
+    """--secondary-dictionary / --secondary-bridge-arguments take any number of entries, as several values or
+    repeated flags, in order"""
+
+    @staticmethod
+    def dictionaries(tmp_path, *names):
+        paths = [tmp_path / name for name in names]
+        for path in paths:
+            path.write_text("{}")
+        return paths
+
+    def test_several_dictionaries_after_one_flag(self, tmp_path):
+        a, b, c = self.dictionaries(tmp_path, "a.json", "b.json", "c.json")
+        args = parse_comm_args("--secondary-dictionary", str(a), str(b), str(c))
+        assert args.secondary_dictionary == [a, b, c]
+
+    def test_repeated_flags_accumulate_in_order(self, tmp_path):
+        a, b, c = self.dictionaries(tmp_path, "a.json", "b.json", "c.json")
+        args = parse_comm_args("--secondary-dictionary", str(a), "--secondary-dictionary", str(b), str(c),
+                               "--secondary-bridge-arguments", "--uart-device /dev/ttyA",
+                               "--secondary-bridge-arguments", "--uart-device /dev/ttyB")
+        assert args.secondary_dictionary == [a, b, c]
+        assert args.secondary_bridge_arguments == ["--uart-device /dev/ttyA", "--uart-device /dev/ttyB"]
+
+    def test_defaults_empty(self):
+        args = parse_comm_args()
+        assert args.secondary_dictionary == []
+        assert args.secondary_bridge_arguments == []
+
+
 class TestCommBridgeAutostart:
     """The launcher bridges every communication adapter other than udp through fprime-comm-bridge"""
 

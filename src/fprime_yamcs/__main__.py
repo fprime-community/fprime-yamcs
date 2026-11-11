@@ -357,18 +357,19 @@ class YamcsParser(ParserBase):
                         "map entry for the AES-GCM encryptor/decryptor. Default: %(default)s",
             },
             ("--secondary-dictionary",): {
-                "action": "store",
+                "action": "extend",
                 "nargs": "+",
                 "default": [],
                 "type": Path,
                 "metavar": "DICTIONARY",
-                "help": "F Prime dictionaries of additional spacecraft received by the same YAMCS instance. Each must "
-                        "carry a distinct ComCfg.SpacecraftId and deployment name. Secondary N gets its own XTCE space "
+                "help": "F Prime dictionaries of additional spacecraft received by the same YAMCS instance, any number, "
+                        "given as several paths and/or by repeating the flag. Each must carry a distinct "
+                        "ComCfg.SpacecraftId and deployment name. Secondary N gets its own XTCE space "
                         "system, TM/TC frame links and split-telemetry link on the primary UDP ports plus "
                         f"{SECONDARY_PORT_STRIDE}*N, and its own event and channel processors.",
             },
             ("--secondary-bridge-arguments",): {
-                "action": "store",
+                "action": "extend",
                 "nargs": "+",
                 "default": [],
                 "metavar": "ARGUMENTS",
