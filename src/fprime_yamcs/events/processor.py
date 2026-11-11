@@ -32,6 +32,7 @@ from fprime_gds.common.loaders.event_json_loader import EventJsonLoader
 from fprime_gds.common.decoders.event_decoder import EventDecoder
 from fprime_gds.common.models.dictionaries import Dictionaries
 from fprime_gds.common.utils.config_manager import ConfigManager
+from ..dictionary import deployment_name
 from .logging import logger
 
 class FPrimeEventProcessor:
@@ -55,7 +56,8 @@ class FPrimeEventProcessor:
     # Event data starts after: SPACE_PACKET_HEADER + FwPacketDescriptorType
     EVENT_DATA_OFFSET = SPACE_PACKET_HEADER_LEN + FW_PACKET_DESCRIPTOR_SIZE
     
-    def __init__(self, yamcs_url: str, yamcs_instance: str, dictionary_path: str):
+    def __init__(self, yamcs_url: str, yamcs_instance: str, dictionary_path: str,
+                 space_system: Optional[str] = None):
         """
         Initialize the FPrime Event Processor
         
@@ -63,10 +65,13 @@ class FPrimeEventProcessor:
             yamcs_url: URL of the YAMCS server (e.g., 'http://localhost:8090')
             yamcs_instance: YAMCS instance name (e.g., 'myproject')
             dictionary_path: Path to the FPrime topology dictionary JSON file
+            space_system: XTCE root space system of this deployment in the MDB; defaults to the name
+                          fprime-to-xtce derives from the dictionary
         """
         self.yamcs_url = yamcs_url
         self.yamcs_instance = yamcs_instance
         self.dictionary_path = Path(dictionary_path)
+        self.space_system = space_system
         
         # Initialize YAMCS client
         logger.info(f"Connecting to YAMCS at {yamcs_url}, instance: {yamcs_instance}")
@@ -249,13 +254,34 @@ class FPrimeEventProcessor:
             logger.error(f"Error publishing event: {e}", exc_info=True)
     
     def _event_container_name(self) -> str:
-        """Resolve the qualified name of the F´ event container in the MDB"""
+        """Resolve the qualified name of the F´ event container in the MDB
+
+        The container is looked up under this deployment's space system: the one given explicitly, else the
+        name fprime-to-xtce derives from the dictionary. A MDB holding a single F´ space system under another
+        name is accepted as well; several candidates without a matching space system are ambiguous.
+        """
         mdb = self.yamcs_client.get_mdb(self.yamcs_instance)
-        for container in mdb.list_containers():
-            if container.qualified_name.endswith("/" + self.EVENT_CONTAINER):
-                return container.qualified_name
+        candidates = [container.qualified_name for container in mdb.list_containers()
+                      if container.qualified_name.endswith("/" + self.EVENT_CONTAINER)]
+        space_system = self.space_system
+        if space_system is None:
+            try:
+                space_system = deployment_name(self.dictionary_path)
+            except (OSError, ValueError) as exc:
+                logger.warning(f"Cannot derive the space system from {self.dictionary_path}: {exc}")
+        if space_system is not None:
+            qualified_name = f"/{space_system}/{self.EVENT_CONTAINER}"
+            if qualified_name in candidates:
+                return qualified_name
+        if self.space_system:
+            raise RuntimeError(
+                f"No '/{self.space_system}/{self.EVENT_CONTAINER}' container found in the MDB (found: {candidates})")
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise RuntimeError(f"No '{self.EVENT_CONTAINER}' container found in the MDB")
         raise RuntimeError(
-            f"No '{self.EVENT_CONTAINER}' container found in the MDB")
+            f"Several '{self.EVENT_CONTAINER}' containers in the MDB ({candidates}); pass --space-system to select one")
 
     def start(self):
         """

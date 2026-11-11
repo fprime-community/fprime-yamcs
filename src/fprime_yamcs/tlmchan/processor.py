@@ -30,7 +30,7 @@ import socket
 import struct
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from yamcs.client import YamcsClient
 from yamcs.client import Packet
@@ -41,6 +41,7 @@ from fprime_gds.common.decoders.ch_decoder import ChDecoder
 from fprime_gds.common.models.dictionaries import Dictionaries
 from fprime_gds.common.models.serialize.time_type import TimeType
 from fprime_gds.common.utils.config_manager import ConfigManager
+from ..dictionary import deployment_name
 from .logging import logger
 
 
@@ -66,7 +67,7 @@ class FPrimeTlmChanProcessor:
     SEQUENCE_COUNT_MODULO = 0x4000
 
     def __init__(self, yamcs_url: str, yamcs_instance: str, dictionary_path: str,
-                 inject_host: str, inject_port: int):
+                 inject_host: str, inject_port: int, space_system: Optional[str] = None):
         """
         Initialize the FPrime TlmChan Processor
 
@@ -76,10 +77,13 @@ class FPrimeTlmChanProcessor:
             dictionary_path: Path to the FPrime topology dictionary JSON file
             inject_host: Host to send split single-record telemetry packets to
             inject_port: UDP port of the YAMCS telemetry packet link for split packets
+            space_system: XTCE root space system of this deployment in the MDB; defaults to the name
+                          fprime-to-xtce derives from the dictionary
         """
         self.yamcs_url = yamcs_url
         self.yamcs_instance = yamcs_instance
         self.dictionary_path = Path(dictionary_path)
+        self.space_system = space_system
         self.inject_address = (inject_host, inject_port)
         self.inject_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sequence_count = 0
@@ -192,13 +196,34 @@ class FPrimeTlmChanProcessor:
             logger.error(f"Error processing channel packet: {e}", exc_info=True)
 
     def _channel_container_name(self) -> str:
-        """Resolve the qualified name of the F´ aggregate channel container in the MDB"""
+        """Resolve the qualified name of the F´ aggregate channel container in the MDB
+
+        The container is looked up under this deployment's space system: the one given explicitly, else the
+        name fprime-to-xtce derives from the dictionary. A MDB holding a single F´ space system under another
+        name is accepted as well; several candidates without a matching space system are ambiguous.
+        """
         mdb = self.yamcs_client.get_mdb(self.yamcs_instance)
-        for container in mdb.list_containers():
-            if container.qualified_name.endswith("/" + self.CHANNEL_CONTAINER):
-                return container.qualified_name
+        candidates = [container.qualified_name for container in mdb.list_containers()
+                      if container.qualified_name.endswith("/" + self.CHANNEL_CONTAINER)]
+        space_system = self.space_system
+        if space_system is None:
+            try:
+                space_system = deployment_name(self.dictionary_path)
+            except (OSError, ValueError) as exc:
+                logger.warning(f"Cannot derive the space system from {self.dictionary_path}: {exc}")
+        if space_system is not None:
+            qualified_name = f"/{space_system}/{self.CHANNEL_CONTAINER}"
+            if qualified_name in candidates:
+                return qualified_name
+        if self.space_system:
+            raise RuntimeError(
+                f"No '/{self.space_system}/{self.CHANNEL_CONTAINER}' container found in the MDB (found: {candidates})")
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise RuntimeError(f"No '{self.CHANNEL_CONTAINER}' container found in the MDB")
         raise RuntimeError(
-            f"No '{self.CHANNEL_CONTAINER}' container found in the MDB")
+            f"Several '{self.CHANNEL_CONTAINER}' containers in the MDB ({candidates}); pass --space-system to select one")
 
     def start(self):
         """

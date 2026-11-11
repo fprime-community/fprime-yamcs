@@ -47,6 +47,11 @@ def parse_args():
     )
     
     parser.add_argument(
+        '--space-system',
+        default=os.environ.get('FPRIME_YAMCS_SPACE_SYSTEM', None),
+        help='XTCE root space system of this deployment in the MDB (default: derived from the dictionary)'
+    )
+    parser.add_argument(
        '--verbose',
         action='store_true',
         help='Enable verbose logging'
@@ -71,7 +76,8 @@ def main():
         processor = FPrimeEventProcessor(
             yamcs_url=args.yamcs_url,
             yamcs_instance=args.instance,
-            dictionary_path=str(args.dictionary)
+            dictionary_path=str(args.dictionary),
+            space_system=args.space_system,
         )
         processor.start()
     except Exception as e:

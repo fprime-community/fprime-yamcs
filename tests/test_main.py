@@ -30,19 +30,29 @@ from fprime_gds.plugin.system import Plugins
 from fprime_yamcs import __main__ as main_module
 from fprime_yamcs.__main__ import (
     LAUNCHER_PLUGIN_CATEGORIES,
+    SECONDARY_PORT_STRIDE,
+    TC_FRAME_LINK,
+    TM_FRAME_LINK,
+    TM_PACKET_LINK,
+    XTCE_ROOT_CONTAINER,
     YamcsParser,
     YamcsPluginArgumentParser,
     anchor_relative_mdb_paths,
     check_comm_bridge_ports,
     check_communication_selection,
     comm_bridge_arguments,
+    configure_secondary_spacecraft,
     get_dictionary_constant,
     launch_comm_bridge,
     launch_deployment_app,
+    launch_secondary_comm_bridges,
     launch_yamcs_maven,
     needs_comm_bridge,
+    secondary_comm_bridge_arguments,
+    secondary_ports,
     without_options,
 )
+from fprime_yamcs.dictionary import deployment_name
 
 DICTIONARY = Path("/deploy/dict/RefTopologyDictionary.json")
 
@@ -55,9 +65,23 @@ def make_args(tmp_path, **overrides):
         "yamcs_plugin_jars": [],
         "yamcs_sdls_key_file": None,
         "yamcs_sdls_spi": 1,
+        "secondary_dictionary": [],
+        "secondary_bridge_arguments": [],
     }
     values.update(overrides)
     return Namespace(**values)
+
+
+def write_dictionary(path, deployment, spacecraft_id, frame_size=1024):
+    """Write a minimal F Prime dictionary carrying the constants the launcher reads"""
+    path.write_text(json.dumps({
+        "metadata": {"deploymentName": deployment},
+        "constants": [
+            {"qualifiedName": "ComCfg.SpacecraftId", "value": spacecraft_id},
+            {"qualifiedName": "ComCfg.TmFrameFixedSize", "value": frame_size},
+        ],
+    }))
+    return path
 
 
 class TestHandleArguments:
@@ -106,6 +130,214 @@ class TestHandleArguments:
         args = self.handle(make_args(tmp_path), discovered=[bad, good])
         assert args.yamcs_web_extension_dirs == [good]
         assert "Skipping discovered web extension" in capsys.readouterr().err
+
+
+    def test_secondary_dictionary_must_be_file(self, tmp_path):
+        args = make_args(tmp_path, secondary_dictionary=[tmp_path / "missing.json"])
+        with pytest.raises(Exception, match="is not a file"):
+            self.handle(args)
+
+    def test_more_bridge_arguments_than_secondaries_rejected(self, tmp_path):
+        secondary = write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71)
+        args = make_args(tmp_path, secondary_dictionary=[secondary],
+                         secondary_bridge_arguments=["--communication-selection uart", "--communication-selection ip"])
+        with pytest.raises(Exception, match="--secondary-bridge-arguments"):
+            self.handle(args)
+
+    def test_secondary_without_bridge_arguments_accepted(self, tmp_path):
+        secondary = write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71)
+        args = self.handle(make_args(tmp_path, secondary_dictionary=[secondary]))
+        assert args.secondary_dictionary == [secondary]
+
+
+class TestDeploymentName:
+    """deployment_name mirrors the root space system name fprime-to-xtce generates"""
+
+    def test_dots_become_underscores(self, tmp_path):
+        assert deployment_name(write_dictionary(tmp_path / "d.json", "Ref.Ref", 68)) == "Ref_Ref"
+
+    def test_missing_deployment_name_rejected(self, tmp_path):
+        path = tmp_path / "d.json"
+        path.write_text(json.dumps({"metadata": {}}))
+        with pytest.raises(ValueError, match="deploymentName"):
+            deployment_name(path)
+
+
+def instance_config():
+    """A yamcs.<instance>.yaml configuration as the launcher leaves it after configuring the primary links"""
+    return {
+        "services": [{"class": "org.yamcs.ProcessRunner", "args": {"command": ["fprime-yamcs-events"]}}],
+        "dataLinks": [
+            {"name": "UDP_TM_IN", "class": TM_FRAME_LINK, "port": 50000, "frameType": "TM", "spacecraftId": 68,
+             "frameLength": 248, "errorDetection": "CRC16", "encryption": [{"spi": 1}],
+             "virtualChannels": [{"vcId": 1, "service": "PACKET", "stream": "tm_realtime", "encryptionSpis": [1],
+                                  "packetPreprocessorArgs": {"doNotArchiveChannelIds": [5]}}]},
+            {"name": "UDP_TM_SPLIT_IN", "class": TM_PACKET_LINK, "stream": "tm_realtime", "port": 50002,
+             "packetPreprocessorArgs": {"doNotArchiveChannelIds": [5]}},
+            {"name": "UDP_TC_OUT", "class": TC_FRAME_LINK, "host": "localhost", "port": 50001, "spacecraftId": 68,
+             "maxFrameLength": 248, "virtualChannels": [{"vcId": 1, "stream": "tc_realtime", "encryptionSpi": 1}]},
+        ],
+        "mdb": [{"type": "xtce", "args": {"file": "/tmp/mdb/fprime.xtce.xml"}}],
+        "streamConfig": {
+            "tm": [{"name": "tm_realtime", "processor": "realtime"}, {"name": "tm_dump"}],
+            "tc": [{"name": "tc_realtime", "processor": "realtime"}],
+            "event": ["events_realtime"],
+        },
+    }
+
+
+class TestSecondarySpacecraft:
+    """Each secondary dictionary gets its own space system, frame links, streams and processors"""
+
+    def configure(self, tmp_path, config, secondaries, primary=None):
+        primary = primary or write_dictionary(tmp_path / "flight.json", "Ref.Ref", 68, 248)
+        with patch.object(main_module.subprocess, "run") as run:
+            configure_secondary_spacecraft(config, tmp_path / "mdb", primary, secondaries, 50001, 50000, 50002)
+        return run
+
+    def test_ports_follow_the_stride(self):
+        assert secondary_ports(1, 50001, 50000, 50002) == (50011, 50010, 50012)
+        assert secondary_ports(2, 50001, 50000, 50002) == (50001 + 2 * SECONDARY_PORT_STRIDE,
+                                                           50000 + 2 * SECONDARY_PORT_STRIDE,
+                                                           50002 + 2 * SECONDARY_PORT_STRIDE)
+
+    def test_secondary_xtce_converted_and_loaded(self, tmp_path):
+        config = instance_config()
+        ground = write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71, 1024)
+        run = self.configure(tmp_path, config, [ground])
+        xtce = tmp_path / "mdb" / "fprime-Ground_Ground.xtce.xml"
+        run.assert_called_once_with([main_module.tool_path("fprime-to-xtce"), "-o", str(xtce), str(ground)], check=True)
+        assert config["mdb"][-1] == {"type": "xtce", "args": {"file": str(xtce)}}
+
+    def test_secondary_links_use_own_ports_scid_and_streams(self, tmp_path):
+        config = instance_config()
+        ground = write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71, 1024)
+        self.configure(tmp_path, config, [ground])
+        links = {link["name"]: link for link in config["dataLinks"]}
+        tm = links["UDP_TM_IN_Ground_Ground"]
+        assert (tm["class"], tm["port"], tm["spacecraftId"], tm["frameLength"]) == (TM_FRAME_LINK, 50010, 71, 1024)
+        assert tm["virtualChannels"][0]["stream"] == "tm_Ground_Ground"
+        tc = links["UDP_TC_OUT_Ground_Ground"]
+        assert (tc["class"], tc["port"], tc["spacecraftId"], tc["maxFrameLength"]) == (TC_FRAME_LINK, 50011, 71, 1024)
+        assert tc["virtualChannels"][0]["stream"] == "tc_Ground_Ground"
+        split = links["UDP_TM_SPLIT_IN_Ground_Ground"]
+        assert (split["class"], split["port"], split["stream"]) == (TM_PACKET_LINK, 50012, "tm_Ground_Ground")
+        # The primary links are left as configured
+        assert (links["UDP_TM_IN"]["port"], links["UDP_TM_IN"]["spacecraftId"]) == (50000, 68)
+
+    def test_primary_only_settings_not_copied(self, tmp_path):
+        config = instance_config()
+        self.configure(tmp_path, config, [write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71)])
+        links = {link["name"]: link for link in config["dataLinks"]}
+        tm = links["UDP_TM_IN_Ground_Ground"]
+        assert "encryption" not in tm and "encryptionSpis" not in tm["virtualChannels"][0]
+        assert "packetPreprocessorArgs" not in tm["virtualChannels"][0]
+        assert "encryptionSpi" not in links["UDP_TC_OUT_Ground_Ground"]["virtualChannels"][0]
+        assert "packetPreprocessorArgs" not in links["UDP_TM_SPLIT_IN_Ground_Ground"]
+
+    def test_streams_bound_to_space_systems(self, tmp_path):
+        config = instance_config()
+        self.configure(tmp_path, config, [write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71)])
+        tm = {entry["name"]: entry for entry in config["streamConfig"]["tm"]}
+        tc = {entry["name"]: entry for entry in config["streamConfig"]["tc"]}
+        assert tm["tm_realtime"]["rootContainer"] == f"/Ref_Ref/{XTCE_ROOT_CONTAINER}"
+        assert tm["tm_Ground_Ground"] == {"name": "tm_Ground_Ground", "processor": "realtime",
+                                          "rootContainer": f"/Ground_Ground/{XTCE_ROOT_CONTAINER}"}
+        assert tc["tc_realtime"]["tcPatterns"] == ["/Ref_Ref/.*"]
+        assert tc["tc_Ground_Ground"] == {"name": "tc_Ground_Ground", "processor": "realtime",
+                                          "tcPatterns": ["/Ground_Ground/.*"]}
+        assert "rootContainer" not in tm["tm_dump"]
+
+    def test_secondary_processors_added(self, tmp_path):
+        config = instance_config()
+        ground = write_dictionary(tmp_path / "ground.json", "Ground.Ground", 71)
+        self.configure(tmp_path, config, [ground])
+        commands = [service["args"]["command"] for service in config["services"]
+                    if service["class"] == "org.yamcs.ProcessRunner"]
+        assert commands[0] == ["fprime-yamcs-events"]
+        assert ["fprime-yamcs-events", "--dictionary", str(ground.resolve()),
+                "--space-system", "Ground_Ground"] in commands
+        assert ["fprime-yamcs-tlmchan", "--dictionary", str(ground.resolve()),
+                "--space-system", "Ground_Ground", "--inject-port", "50012"] in commands
+        for service in config["services"][1:]:
+            assert service["args"]["restart"] == "always"
+
+    def test_two_secondaries_get_distinct_ports(self, tmp_path):
+        config = instance_config()
+        self.configure(tmp_path, config, [write_dictionary(tmp_path / "a.json", "A.A", 71),
+                                          write_dictionary(tmp_path / "b.json", "B.B", 72)])
+        links = {link["name"]: link for link in config["dataLinks"]}
+        assert links["UDP_TM_IN_A_A"]["port"] == 50010 and links["UDP_TM_IN_B_B"]["port"] == 50020
+        assert links["UDP_TC_OUT_A_A"]["port"] == 50011 and links["UDP_TC_OUT_B_B"]["port"] == 50021
+
+    def test_duplicate_deployment_name_rejected(self, tmp_path):
+        with pytest.raises(Exception, match="deployment name"):
+            self.configure(tmp_path, instance_config(), [write_dictionary(tmp_path / "g.json", "Ref.Ref", 71)])
+
+    def test_duplicate_spacecraft_id_rejected(self, tmp_path):
+        with pytest.raises(Exception, match="SpacecraftId"):
+            self.configure(tmp_path, instance_config(), [write_dictionary(tmp_path / "g.json", "Ground.Ground", 68)])
+
+    def test_missing_frame_link_rejected(self, tmp_path):
+        config = instance_config()
+        config["dataLinks"] = [link for link in config["dataLinks"] if link["class"] != TC_FRAME_LINK]
+        with pytest.raises(Exception, match=TC_FRAME_LINK.replace(".", "\\.")):
+            self.configure(tmp_path, config, [write_dictionary(tmp_path / "g.json", "Ground.Ground", 71)])
+
+    def test_no_split_link_is_fine(self, tmp_path):
+        config = instance_config()
+        config["dataLinks"] = [link for link in config["dataLinks"] if link["class"] != TM_PACKET_LINK]
+        self.configure(tmp_path, config, [write_dictionary(tmp_path / "g.json", "Ground.Ground", 71)])
+        assert not any(link["name"].startswith("UDP_TM_SPLIT_IN") for link in config["dataLinks"])
+
+
+class TestSecondaryCommBridges:
+    """One fprime-comm-bridge per secondary with bridge arguments, on that secondary's YAMCS ports"""
+
+    def args(self, tmp_path, **overrides):
+        return make_args(tmp_path, udp_uplink_port=50001, udp_downlink_port=50000, udp_tm_inject_port=50002,
+                         **overrides)
+
+    def test_adapter_arguments_dictionary_and_ports(self, tmp_path):
+        ground = tmp_path / "ground.json"
+        arguments = secondary_comm_bridge_arguments(
+            self.args(tmp_path), 1, ground, "--communication-selection uart --uart-device /dev/ttyACM1 --uart-baud 115200")
+        assert arguments[:2] == ["--framing-selection", main_module.DEFAULT_FRAMING]
+        assert contains_sequence(arguments, ["--communication-selection", "uart", "--uart-device", "/dev/ttyACM1",
+                                             "--uart-baud", "115200"])
+        assert contains_sequence(arguments, ["--dictionary", str(ground.resolve())])
+        assert contains_sequence(arguments, ["--udp-fast-address", "127.0.0.1", "--udp-fast-send-port", "50010",
+                                             "--udp-fast-bind-address", "127.0.0.1", "--udp-fast-recv-port", "50011"])
+
+    def test_framing_selection_override_kept(self, tmp_path):
+        arguments = secondary_comm_bridge_arguments(
+            self.args(tmp_path), 2, tmp_path / "g.json", "--framing-selection tm-frame-aggregator --communication-selection ip")
+        assert arguments.count("--framing-selection") == 1
+        assert contains_sequence(arguments, ["--framing-selection", "tm-frame-aggregator"])
+        assert contains_sequence(arguments, ["--udp-fast-send-port", "50020", "--udp-fast-bind-address", "127.0.0.1",
+                                             "--udp-fast-recv-port", "50021"])
+
+    def test_ground_side_options_dropped(self, tmp_path):
+        arguments = secondary_comm_bridge_arguments(
+            self.args(tmp_path), 1, tmp_path / "g.json", "--communication-selection ip --udp-fast-send-port 1 --ip-port 7")
+        assert "1" not in arguments and contains_sequence(arguments, ["--ip-port", "7"])
+        assert contains_sequence(arguments, ["--udp-fast-send-port", "50010"])
+
+    def test_one_bridge_per_secondary_with_arguments(self, tmp_path):
+        args = self.args(tmp_path, secondary_dictionary=[tmp_path / "a.json", tmp_path / "b.json"],
+                         secondary_bridge_arguments=["--communication-selection ip"])
+        with patch.object(main_module, "launch_process", return_value="process") as launch:
+            assert launch_secondary_comm_bridges(args) == ["process"]
+        command = launch.call_args.args[0]
+        assert command[:len(main_module.BASE_MODULE_ARGUMENTS) + 1] == \
+            main_module.BASE_MODULE_ARGUMENTS + ["fprime_gds.executables.comm_bridge"]
+        assert contains_sequence(command, ["--dictionary", str((tmp_path / "a.json").resolve())])
+        assert launch.call_args.kwargs["name"] == "fprime-comm-bridge[secondary 1]"
+
+    def test_no_secondaries_launch_nothing(self, tmp_path):
+        with patch.object(main_module, "launch_process") as launch:
+            assert launch_secondary_comm_bridges(self.args(tmp_path)) == []
+        launch.assert_not_called()
 
 
 class TestGetDictionaryConstant:
@@ -162,6 +394,36 @@ def parse_comm_args(*argv):
 def contains_sequence(arguments, expected):
     """True when the expected argument sequence appears contiguously in the arguments"""
     return any(arguments[i:i + len(expected)] == expected for i in range(len(arguments)))
+
+
+class TestSecondaryArguments:
+    """--secondary-dictionary / --secondary-bridge-arguments take any number of entries, as several values or
+    repeated flags, in order"""
+
+    @staticmethod
+    def dictionaries(tmp_path, *names):
+        paths = [tmp_path / name for name in names]
+        for path in paths:
+            path.write_text("{}")
+        return paths
+
+    def test_several_dictionaries_after_one_flag(self, tmp_path):
+        a, b, c = self.dictionaries(tmp_path, "a.json", "b.json", "c.json")
+        args = parse_comm_args("--secondary-dictionary", str(a), str(b), str(c))
+        assert args.secondary_dictionary == [a, b, c]
+
+    def test_repeated_flags_accumulate_in_order(self, tmp_path):
+        a, b, c = self.dictionaries(tmp_path, "a.json", "b.json", "c.json")
+        args = parse_comm_args("--secondary-dictionary", str(a), "--secondary-dictionary", str(b), str(c),
+                               "--secondary-bridge-arguments", "--uart-device /dev/ttyA",
+                               "--secondary-bridge-arguments", "--uart-device /dev/ttyB")
+        assert args.secondary_dictionary == [a, b, c]
+        assert args.secondary_bridge_arguments == ["--uart-device /dev/ttyA", "--uart-device /dev/ttyB"]
+
+    def test_defaults_empty(self):
+        args = parse_comm_args()
+        assert args.secondary_dictionary == []
+        assert args.secondary_bridge_arguments == []
 
 
 class TestCommBridgeAutostart:
